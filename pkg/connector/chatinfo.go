@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/rs/zerolog"
 	"go.mau.fi/util/ptr"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
@@ -78,13 +79,17 @@ func (kc *KakaoClient) GetChatInfo(ctx context.Context, portal *bridgev2.Portal)
 		return nil, fmt.Errorf("failed to get chat: %w", err)
 	}
 	var members []KakaoMember
+	membersFull := true
 	if err = kc.call(ctx, "getMembers", map[string]any{"chat_id": chatID}, &members); err != nil {
-		return nil, fmt.Errorf("failed to get members: %w", err)
+		// Still bridge the chat; senders get added as their messages arrive.
+		zerolog.Ctx(ctx).Warn().Err(err).Str("chat_id", chatID).Msg("Failed to get members, bridging chat without full member list")
+		members = nil
+		membersFull = false
 	}
 
 	info := &bridgev2.ChatInfo{
 		Members: &bridgev2.ChatMemberList{
-			IsFull:           true,
+			IsFull:           membersFull,
 			TotalMemberCount: len(members),
 			MemberMap:        make(bridgev2.ChatMemberMap, len(members)),
 		},

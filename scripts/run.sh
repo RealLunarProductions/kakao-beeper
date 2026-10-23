@@ -51,12 +51,12 @@ network:
 EOF
 fi
 
-if [ ! -d "$here/sidecar/node_modules" ]; then
+if [ ! -f "$here/sidecar/node_modules/.package-lock.json" ] ||
+    [ "$here/sidecar/package.json" -nt "$here/sidecar/node_modules/.package-lock.json" ]; then
     npm install --prefix "$here/sidecar" --ignore-scripts --no-audit --no-fund
 fi
-if [ ! -x "$here/mautrix-kakaotalk" ]; then
-    (cd "$here" && go build -tags goolm -o mautrix-kakaotalk ./cmd/mautrix-kakaotalk)
-fi
+# Always rebuild so a pulled/merged update is picked up (incremental, fast).
+(cd "$here" && go build -tags goolm -o mautrix-kakaotalk ./cmd/mautrix-kakaotalk)
 
 echo "== Starting bridge (Ctrl+C to stop). In Beeper, DM @sh-kakaotalkbot:beeper.local and send: login"
 exec "$here/mautrix-kakaotalk" -c config.yaml

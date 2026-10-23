@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "agent-messenger": "2.39.1"
+    "agent-messenger": "2.39.1",
+    "bson": "6.10.4"
   }
 }

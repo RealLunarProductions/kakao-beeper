@@ -29,6 +29,7 @@ process.env.AGENT_MESSENGER_CONFIG_DIR = stateDir
 
 // Imported after the env var is set so agent-messenger picks up stateDir.
 const { KakaoTalkClient, KakaoTalkListener } = await import('agent-messenger/kakaotalk')
+const { Long } = await import('bson')
 
 let client = null
 let listener = null
@@ -67,13 +68,34 @@ function need() {
   return client
 }
 
+// agent-messenger's getMembers double-reads CHATINFO/GETMEM and rejects groups
+// whose member records don't exactly match the active member count, which some
+// groups never do. Fall back to a single GETMEM read for those.
+async function getMembers(chatId) {
+  try {
+    return await need().getMembers(chatId)
+  } catch (err) {
+    if (!String(err?.message).includes('member_snapshot_changed_or_incomplete')) throw err
+  }
+  const session = await need().acquireSession()
+  const res = await session.getAllMembers(Long.fromString(chatId))
+  if (typeof res.body.status === 'number' && res.body.status !== 0) {
+    throw Object.assign(new Error(`GETMEM failed: ${res.body.status}`), { code: 'get_members_failed' })
+  }
+  return (res.body.members ?? []).map((m) => ({
+    user_id: String(m.userId),
+    nickname: typeof m.nickName === 'string' ? m.nickName : '',
+    profile_image_url: m.profileImageUrl ?? m.pi ?? null,
+  }))
+}
+
 const methods = {
   start,
   ping: async () => 'pong',
   getProfile: async () => plain(await need().getProfile()),
   getChats: async (p) => plain(await need().getChats({ all: p.all ?? true, resolveTitles: p.resolve_titles ?? false })),
   getChat: async (p) => plain(await need().getChat(p.chat_id)),
-  getMembers: async (p) => plain(await need().getMembers(p.chat_id)),
+  getMembers: async (p) => plain(await getMembers(p.chat_id)),
   getMessages: async (p) => plain(await need().getMessages(p.chat_id, { count: p.count ?? 20, from: p.from })),
   getMessagePage: async (p) => plain(await need().getMessagePage(p.chat_id, { count: p.count ?? 50, from: p.from })),
   sendMessage: async (p) =>
