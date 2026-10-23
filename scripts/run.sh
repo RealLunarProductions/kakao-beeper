@@ -29,7 +29,8 @@ fi
 
 if [ ! -f config.yaml ]; then
     echo "== Registering sh-kakaotalk with Beeper and generating config.yaml"
-    bbctl config --type bridgev2 sh-kakaotalk -o config.yaml.new
+    # bbctl (urfave/cli) needs all flags before the bridge name.
+    bbctl config --type bridgev2 -o config.yaml.new sh-kakaotalk
     if ! grep -q 'software: hungry' config.yaml.new 2>/dev/null; then
         echo "bbctl config did not produce a Beeper config; aborting." >&2
         rm -f config.yaml.new
