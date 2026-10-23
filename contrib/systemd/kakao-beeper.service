@@ -1,0 +1,20 @@
+[Unit]
+Description=KakaoTalk bridge for Beeper (mautrix-kakaotalk)
+Documentation=https://github.com/RealLunarProductions/kakao-beeper
+# Starts with every graphical session (Noctalia and the rices) and whenever
+# beeper.service is started directly. Closing Beeper doesn't stop it, so
+# KakaoTalk keeps reaching Beeper on other devices; it ends with the session.
+After=network-online.target graphical-session.target beeper.service
+Wants=network-online.target
+PartOf=graphical-session.target
+ConditionPathExists=%h/.local/share/kakao-beeper/config.yaml
+
+[Service]
+WorkingDirectory=%h/.local/share/kakao-beeper
+ExecStart=%h/kakao-beeper/mautrix-kakaotalk -c config.yaml
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=20
+
+[Install]
+WantedBy=graphical-session.target beeper.service

@@ -35,6 +35,18 @@ The sidecar copies the credentials to `~/.local/share/kakao-beeper/agent-messeng
 LOGINLIST only returns chats changed since the saved sync state, so the sidecar
 drops that state on every start and always receives the full chat list.
 
+## Autostart in every session
+
+After the first `scripts/run.sh` setup, stop it (Ctrl+C) and run `scripts/install-service.sh`.
+It installs `contrib/systemd/kakao-beeper.service` into `~/.config/systemd/user` (and chezmoi),
+wanted by both `graphical-session.target` and `beeper.service`: the bridge comes up with every
+graphical session (Hyprland Noctalia and all `~/rices` sessions) and whenever Beeper is started.
+Closing Beeper leaves it running; it stops with the session.
+
+- Logs: `journalctl --user -u kakao-beeper -f` (also `~/.local/share/kakao-beeper/logs/bridge.log`)
+- After pulling changes: `go build -tags goolm -o mautrix-kakaotalk ./cmd/mautrix-kakaotalk && systemctl --user restart kakao-beeper`
+- Remove: `systemctl --user disable --now kakao-beeper && rm ~/.config/systemd/user/kakao-beeper.service`
+
 ## What's bridged
 
 | KakaoTalk → Beeper | Beeper → KakaoTalk |
