@@ -7,12 +7,13 @@
 //   event    {"event": "message", "data": {...}}
 // Logs go to stderr so stdout stays a clean protocol stream.
 //
-// The sidecar keeps its own agent-messenger config dir (KAKAO_SIDECAR_STATE_DIR)
-// so its LOGINLIST sync state is independent of the agent-kakaotalk CLI: the
-// first start does a full chat sync, later starts only receive deltas. On first
-// start the credentials are copied over from the CLI's config dir.
+// The sidecar keeps its own agent-messenger config dir (KAKAO_SIDECAR_STATE_DIR),
+// independent of the agent-kakaotalk CLI. On first start the credentials are
+// copied over from the CLI's config dir. LOGINLIST only returns chats changed
+// since the saved sync state, so start() drops that state to always get the
+// full chat list (the bridge dedupes known chats itself).
 
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -39,8 +40,15 @@ const emit = (event, data) => write({ event, data })
 // LOCO values can carry bigints; make everything JSON-safe.
 const plain = (value) => JSON.parse(JSON.stringify(value ?? null, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)))
 
+function dropSyncState() {
+  for (const name of readdirSync(stateDir)) {
+    if (name.startsWith('kakaotalk-sync-state-')) rmSync(join(stateDir, name), { force: true })
+  }
+}
+
 async function start() {
   if (client) return plain(await client.getProfile())
+  dropSyncState()
   client = await new KakaoTalkClient().login()
   listener = new KakaoTalkListener(client)
   listener.on('connected', (info) => emit('connected', plain(info)))

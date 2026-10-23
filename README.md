@@ -31,9 +31,9 @@ while the bridge is up.
 3. In Beeper, start a chat with `@sh-kakaotalkbot:beeper.local` and send `login`.
    The bridge adopts the agent-kakaotalk credentials and starts syncing chats.
 
-The sidecar copies the credentials to `~/.local/share/kakao-beeper/agent-messenger/`
-and keeps its own sync state there: the first start syncs the full chat list,
-later starts only receive chats that changed.
+The sidecar copies the credentials to `~/.local/share/kakao-beeper/agent-messenger/`.
+LOGINLIST only returns chats changed since the saved sync state, so the sidecar
+drops that state on every start and always receives the full chat list.
 
 ## What's bridged
 
