@@ -1,0 +1,9 @@
+# Node.js binary used to run the KakaoTalk sidecar.
+node_path: /usr/bin/node
+# Path to sidecar/sidecar.mjs (its node_modules must be installed next to it).
+sidecar_script: ~/kakao-beeper/sidecar/sidecar.mjs
+# Private agent-messenger state for the sidecar. Credentials are copied here from
+# ~/.config/agent-messenger on first start (log in with `agent-kakaotalk auth login`).
+state_dir: ~/.local/share/kakao-beeper/agent-messenger
+# Number of recent messages to bridge when a chat is first created in Beeper.
+initial_backfill: 30

@@ -1,0 +1,110 @@
+// KakaoTalk sidecar for mautrix-kakaotalk.
+//
+// Owns a single LOCO session (agent-messenger, tablet slot) and speaks
+// newline-delimited JSON on stdio:
+//   request  {"id": 1, "method": "getChats", "params": {...}}
+//   response {"id": 1, "result": ...} | {"id": 1, "error": {"code", "message"}}
+//   event    {"event": "message", "data": {...}}
+// Logs go to stderr so stdout stays a clean protocol stream.
+//
+// The sidecar keeps its own agent-messenger config dir (KAKAO_SIDECAR_STATE_DIR)
+// so its LOGINLIST sync state is independent of the agent-kakaotalk CLI: the
+// first start does a full chat sync, later starts only receive deltas. On first
+// start the credentials are copied over from the CLI's config dir.
+
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { createInterface } from 'node:readline'
+
+const CREDENTIALS_FILE = 'kakaotalk-credentials.json'
+const stateDir = process.env.KAKAO_SIDECAR_STATE_DIR ?? join(homedir(), '.local/share/kakao-beeper/agent-messenger')
+const cliDir = process.env.KAKAO_CLI_CONFIG_DIR ?? join(homedir(), '.config/agent-messenger')
+mkdirSync(stateDir, { recursive: true, mode: 0o700 })
+if (!existsSync(join(stateDir, CREDENTIALS_FILE)) && existsSync(join(cliDir, CREDENTIALS_FILE))) {
+  copyFileSync(join(cliDir, CREDENTIALS_FILE), join(stateDir, CREDENTIALS_FILE))
+}
+process.env.AGENT_MESSENGER_CONFIG_DIR = stateDir
+
+// Imported after the env var is set so agent-messenger picks up stateDir.
+const { KakaoTalkClient, KakaoTalkListener } = await import('agent-messenger/kakaotalk')
+
+let client = null
+let listener = null
+
+const write = (obj) => process.stdout.write(JSON.stringify(obj) + '\n')
+const log = (...args) => console.error('[sidecar]', ...args)
+const emit = (event, data) => write({ event, data })
+
+// LOCO values can carry bigints; make everything JSON-safe.
+const plain = (value) => JSON.parse(JSON.stringify(value ?? null, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)))
+
+async function start() {
+  if (client) return plain(await client.getProfile())
+  client = await new KakaoTalkClient().login()
+  listener = new KakaoTalkListener(client)
+  listener.on('connected', (info) => emit('connected', plain(info)))
+  listener.on('disconnected', () => emit('disconnected', {}))
+  listener.on('error', (err) => emit('error', { message: err?.message ?? String(err) }))
+  listener.on('message', (evt) => emit('message', plain(evt)))
+  listener.on('read', (evt) => emit('read', plain(evt)))
+  listener.on('member_joined', (evt) => emit('member_joined', plain(evt)))
+  listener.on('member_left', (evt) => emit('member_left', plain(evt)))
+  await listener.start()
+  return plain(await client.getProfile())
+}
+
+function need() {
+  if (!client) throw Object.assign(new Error('sidecar not started'), { code: 'not_started' })
+  return client
+}
+
+const methods = {
+  start,
+  ping: async () => 'pong',
+  getProfile: async () => plain(await need().getProfile()),
+  getChats: async (p) => plain(await need().getChats({ all: p.all ?? true, resolveTitles: p.resolve_titles ?? false })),
+  getChat: async (p) => plain(await need().getChat(p.chat_id)),
+  getMembers: async (p) => plain(await need().getMembers(p.chat_id)),
+  getMessages: async (p) => plain(await need().getMessages(p.chat_id, { count: p.count ?? 20, from: p.from })),
+  getMessagePage: async (p) => plain(await need().getMessagePage(p.chat_id, { count: p.count ?? 50, from: p.from })),
+  sendMessage: async (p) =>
+    plain(await need().sendMessage(p.chat_id, p.text, p.reply_to ? { replyTo: p.reply_to } : undefined)),
+  sendPhoto: async (p) => plain(await need().sendPhoto(p.chat_id, Buffer.from(p.data_b64, 'base64'), p.filename)),
+  sendTyping: async (p) => plain(await need().sendTyping(p.chat_id)),
+  markRead: async (p) => plain(await need().markRead(p.chat_id, p.log_id)),
+}
+
+function shutdown(code = 0) {
+  try { listener?.stop() } catch {}
+  try { client?.close() } catch {}
+  process.exit(code)
+}
+
+process.on('SIGTERM', () => shutdown(0))
+process.on('SIGINT', () => shutdown(130))
+process.on('unhandledRejection', (err) => log('unhandled rejection:', err?.message ?? err))
+
+const rl = createInterface({ input: process.stdin })
+rl.on('line', async (line) => {
+  if (!line.trim()) return
+  let req
+  try {
+    req = JSON.parse(line)
+  } catch {
+    log('bad request line')
+    return
+  }
+  const fn = methods[req.method]
+  if (!fn) {
+    write({ id: req.id, error: { code: 'unknown_method', message: `unknown method ${req.method}` } })
+    return
+  }
+  try {
+    write({ id: req.id, result: (await fn(req.params ?? {})) ?? null })
+  } catch (err) {
+    write({ id: req.id, error: { code: err?.code ?? 'error', message: err?.message ?? String(err) } })
+  }
+})
+// The bridge owns our lifetime: exit when it closes our stdin.
+rl.on('close', () => shutdown(0))
