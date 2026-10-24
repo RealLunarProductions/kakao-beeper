@@ -2,19 +2,30 @@ package connector
 
 import (
 	"context"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/rs/zerolog"
 	up "go.mau.fi/util/configupgrade"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
+	"maunium.net/go/mautrix/id"
 )
 
 type KakaoConnector struct {
 	Bridge *bridgev2.Bridge
 	Config Config
+
+	// iconMXC is the uploaded network icon, set in Start (before bridge info is sent).
+	iconMXC id.ContentURIString
 }
+
+//go:embed kakaotalk-icon.png
+var networkIcon []byte
 
 var _ bridgev2.NetworkConnector = (*KakaoConnector)(nil)
 
@@ -58,6 +69,7 @@ func (kc *KakaoConnector) GetName() bridgev2.BridgeName {
 	return bridgev2.BridgeName{
 		DisplayName:          "KakaoTalk",
 		NetworkURL:           "https://www.kakaocorp.com/page/service/service/KakaoTalk",
+		NetworkIcon:          kc.iconMXC,
 		NetworkID:            "kakaotalk",
 		BeeperBridgeType:     "kakaotalk",
 		DefaultPort:          29380,
@@ -76,7 +88,32 @@ func (kc *KakaoConnector) Init(bridge *bridgev2.Bridge) {
 }
 
 func (kc *KakaoConnector) Start(ctx context.Context) error {
+	kc.iconMXC = kc.uploadNetworkIcon(ctx)
 	return nil
+}
+
+// uploadNetworkIcon uploads the embedded KakaoTalk logo once and caches its mxc URI
+// (keyed by the image hash) next to the sidecar state.
+func (kc *KakaoConnector) uploadNetworkIcon(ctx context.Context) id.ContentURIString {
+	log := zerolog.Ctx(ctx)
+	sum := sha256.Sum256(networkIcon)
+	hash := hex.EncodeToString(sum[:8])
+	cachePath := filepath.Join(filepath.Dir(kc.Config.StateDir), "network-icon.txt")
+	if cached, err := os.ReadFile(cachePath); err == nil {
+		if h, uri, ok := strings.Cut(strings.TrimSpace(string(cached)), " "); ok && h == hash {
+			return id.ContentURIString(uri)
+		}
+	}
+	uri, _, err := kc.Bridge.Bot.UploadMedia(ctx, "", networkIcon, "kakaotalk.png", "image/png")
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to upload network icon")
+		return ""
+	}
+	if err = os.WriteFile(cachePath, []byte(hash+" "+string(uri)+"\n"), 0o600); err != nil {
+		log.Warn().Err(err).Msg("Failed to cache network icon URI")
+	}
+	log.Info().Str("mxc", string(uri)).Msg("Uploaded network icon")
+	return uri
 }
 
 var generalCaps = &bridgev2.NetworkGeneralCapabilities{}
@@ -85,8 +122,9 @@ func (kc *KakaoConnector) GetCapabilities() *bridgev2.NetworkGeneralCapabilities
 	return generalCaps
 }
 
+// Bump info when GetName changes (2: network icon) so existing rooms get updated bridge info.
 func (kc *KakaoConnector) GetBridgeInfoVersion() (info, capabilities int) {
-	return 1, 1
+	return 2, 1
 }
 
 func (kc *KakaoConnector) GetDBMetaTypes() database.MetaTypes {
