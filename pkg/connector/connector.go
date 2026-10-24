@@ -13,6 +13,7 @@ import (
 	up "go.mau.fi/util/configupgrade"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
+	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 )
 
@@ -122,9 +123,24 @@ func (kc *KakaoConnector) GetCapabilities() *bridgev2.NetworkGeneralCapabilities
 	return generalCaps
 }
 
-// Bump info when GetName changes (2: network icon) so existing rooms get updated bridge info.
+// Bump info when the bridge info content changes so existing rooms get it resent
+// (2: network icon, 3: m.bridge network section).
 func (kc *KakaoConnector) GetBridgeInfoVersion() (info, capabilities int) {
-	return 2, 1
+	return 3, 1
+}
+
+var _ bridgev2.PortalBridgeInfoFillingNetwork = (*KakaoConnector)(nil)
+
+// FillPortalBridgeInfo adds a network section to m.bridge. Beeper Desktop has no
+// built-in KakaoTalk platform (it shows "Generic Matrix Bridge"), but it draws
+// network.avatar_url as the account icon and uses network.displayname in labels.
+func (kc *KakaoConnector) FillPortalBridgeInfo(portal *bridgev2.Portal, content *event.BridgeEventContent) {
+	content.Protocol.DisplayName = "KakaoTalk"
+	content.Network = &event.BridgeInfoSection{
+		ID:          "kakaotalk",
+		DisplayName: "KakaoTalk",
+		AvatarURL:   kc.iconMXC,
+	}
 }
 
 func (kc *KakaoConnector) GetDBMetaTypes() database.MetaTypes {
