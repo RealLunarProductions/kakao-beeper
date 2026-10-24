@@ -47,12 +47,14 @@ type KakaoMember struct {
 	ProfileImageURL *string `json:"profile_image_url"`
 }
 
-// KakaoMessage covers both history entries (type) and live pushes (message_type, chat_id).
+// KakaoMessage covers both history entries and live pushes. History entries carry
+// the LOCO message type in "type"; pushes use "type" for the push kind ("MSG")
+// and carry the message type in "message_type".
 type KakaoMessage struct {
-	ChatID      string         `json:"chat_id"`
-	LogID       string         `json:"log_id"`
-	Type        int            `json:"type"`
-	MessageType int            `json:"message_type"`
+	ChatID      string          `json:"chat_id"`
+	LogID       string          `json:"log_id"`
+	Type        json.RawMessage `json:"type"`
+	MessageType int             `json:"message_type"`
 	AuthorID    int64          `json:"author_id"`
 	AuthorName  *string        `json:"author_name"`
 	Message     string         `json:"message"`
@@ -64,7 +66,9 @@ func (m *KakaoMessage) Kind() int {
 	if m.MessageType != 0 {
 		return m.MessageType
 	}
-	return m.Type
+	var kind int
+	_ = json.Unmarshal(m.Type, &kind)
+	return kind
 }
 
 type KakaoReadEvent struct {
