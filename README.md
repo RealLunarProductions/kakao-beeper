@@ -90,6 +90,11 @@ If you use an AI assistant with the Beeper Desktop MCP server, have it draft ins
 the MCP `focus_app` tool with `chatID` + `draftText` opens the chat with the text in the
 composer, and you review and press Enter yourself.
 
+## License
+
+MIT, see `LICENSE`. Dependencies keep their own licenses (`THIRD_PARTY_NOTICES.md`); the
+KakaoTalk name and icon belong to Kakao Corp.
+
 ## Credits
 
 Built on [mautrix-go](https://github.com/mautrix/go) (bridgev2) and
