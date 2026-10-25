@@ -28,7 +28,7 @@ ask_yes() { # ask_yes "question" default(y|n)
 }
 
 kakao_logged_in() { "$NODE" "$KAKAO_CLI" auth status >/dev/null 2>&1; }
-beeper_logged_in() { ! "$BBCTL" whoami 2>&1 | grep -qi "not logged in"; }
+beeper_logged_in() { "$BBCTL" whoami 2>&1 | grep -q '^User ID:'; }
 service_loaded() { launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; }
 
 cmd_login_kakao() {
