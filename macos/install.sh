@@ -100,8 +100,12 @@ else
     command -v go >/dev/null 2>&1 || die "no prebuilt binary in this package and Go isn't installed. Run: brew install go   (or ask for a package that includes the binary)"
     xcode-select -p >/dev/null 2>&1 || die "building needs Apple's command line tools. Run: xcode-select --install   then re-run this."
     say "building from source (needs Go and Apple's command line tools; takes a couple of minutes)"
-    pkg_version="$(cat "$PKG/VERSION" 2>/dev/null || echo dev)"
-    (cd "$PKG/src" && CGO_ENABLED=1 go build -tags goolm -trimpath -ldflags "-s -w -X main.Tag=$pkg_version" -o "$APP/bin/mautrix-kakaotalk.new" ./cmd/mautrix-kakaotalk)
+    pkg_version="$(cat "$PKG/VERSION" 2>/dev/null || echo unknown)"
+    pkg_commit="$(cat "$PKG/COMMIT" 2>/dev/null || echo unknown)"
+    build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    (cd "$PKG/src" && CGO_ENABLED=1 go build -tags goolm -trimpath \
+        -ldflags "-s -w -X main.Tag=$pkg_version -X main.Commit=$pkg_commit -X main.BuildTime=$build_time" \
+        -o "$APP/bin/mautrix-kakaotalk.new" ./cmd/mautrix-kakaotalk)
 fi
 chmod 755 "$APP/bin/mautrix-kakaotalk.new"
 mv "$APP/bin/mautrix-kakaotalk.new" "$APP/bin/mautrix-kakaotalk"

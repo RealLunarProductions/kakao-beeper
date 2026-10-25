@@ -22,8 +22,9 @@ jobs:
       - name: Build bridge (arm64 + amd64)
         run: |
           mkdir -p out
-          CGO_ENABLED=1 GOARCH=arm64 go build -tags goolm -trimpath -ldflags "-s -w" -o out/mautrix-kakaotalk-darwin-arm64 ./cmd/mautrix-kakaotalk
-          CGO_ENABLED=1 GOARCH=amd64 CC="clang -arch x86_64" go build -tags goolm -trimpath -ldflags "-s -w" -o out/mautrix-kakaotalk-darwin-amd64 ./cmd/mautrix-kakaotalk
+          LDFLAGS="-s -w -X main.Tag=$(git describe --tags --always) -X main.Commit=$(git rev-parse HEAD) -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          CGO_ENABLED=1 GOARCH=arm64 go build -tags goolm -trimpath -ldflags "$LDFLAGS" -o out/mautrix-kakaotalk-darwin-arm64 ./cmd/mautrix-kakaotalk
+          CGO_ENABLED=1 GOARCH=amd64 CC="clang -arch x86_64" go build -tags goolm -trimpath -ldflags "$LDFLAGS" -o out/mautrix-kakaotalk-darwin-amd64 ./cmd/mautrix-kakaotalk
           file out/*
           ./out/mautrix-kakaotalk-darwin-arm64 --version
       - name: Package

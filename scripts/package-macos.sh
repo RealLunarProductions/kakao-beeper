@@ -28,6 +28,8 @@ cp "$work/macos/CLAUDE.md" "$pkg/CLAUDE.md"
 cp "$work/macos/CLAUDE.md" "$pkg/AGENTS.md"
 chmod 755 "$pkg/install.sh" "$pkg/kakao-beeper"
 echo "$version" >"$pkg/VERSION"
+# install.sh stamps a source build with these (mxmain prints v<base>+dev.<commit[:8]>).
+git rev-parse HEAD >"$pkg/COMMIT"
 
 if [ -n "${KB_BIN_DIR:-}" ]; then
     for arch in arm64 amd64; do
