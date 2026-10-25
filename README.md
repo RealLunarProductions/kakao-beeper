@@ -66,6 +66,20 @@ Closing Beeper leaves it running; it stops with the session.
 Not yet: reactions, edits/deletes, member join/leave sync, backward backfill,
 sending files other than images.
 
+## Connection handling
+
+agent-messenger drops its session when the LOCO socket closes and only logs in again on
+the next API call, so the sidecar takes care of staying connected:
+
+- socket closed (sleep, network change) → `disconnected` event, reconnect with a 3 s → 60 s
+  backoff; on success the bridge resyncs chats and forward-backfills what was missed
+- a CHATINFO round trip on the memo chat every 90 s catches half-open sockets (pings inside
+  agent-messenger are fire-and-forget) and closes the session so the loop above runs
+- kicked by another device → sidecar exits 3, the bridge logs in again after one minute
+- token rejected by KakaoTalk → sidecar exits 78, bridge state `BAD_CREDENTIALS`, no retries
+  until `agent-kakaotalk auth login` + restart
+- a failed start (offline) is retried after 10 s, 20 s, 40 s … up to 5 min
+
 ## Drafting before sending
 
 Once a chat is bridged, Claude drafts into Beeper instead of sending: the Beeper

@@ -48,8 +48,13 @@ node_ok() {
 }
 
 step "Node.js (the KakaoTalk connection runs on it)"
+# launchd starts the bridge with a bare environment, so the node path written into
+# the config must be a real binary at a stable path: Homebrew or the official
+# installer. Version-manager shims (nvm, volta, asdf, fnm) don't resolve there and
+# move between versions, so anything else gets its own copy of the official build.
+# KB_NODE forces a specific binary.
 NODE=""
-for cand in "$(command -v node 2>/dev/null || true)" /opt/homebrew/bin/node /usr/local/bin/node "$APP/node/bin/node"; do
+for cand in "${KB_NODE:-}" /opt/homebrew/bin/node /usr/local/bin/node "$APP/node/bin/node"; do
     if [ -n "$cand" ] && node_ok "$cand"; then NODE="$cand"; break; fi
 done
 if [ -z "$NODE" ]; then
@@ -95,7 +100,8 @@ else
     command -v go >/dev/null 2>&1 || die "no prebuilt binary in this package and Go isn't installed. Run: brew install go   (or ask for a package that includes the binary)"
     xcode-select -p >/dev/null 2>&1 || die "building needs Apple's command line tools. Run: xcode-select --install   then re-run this."
     say "building from source (needs Go and Apple's command line tools; takes a couple of minutes)"
-    (cd "$PKG/src" && CGO_ENABLED=1 go build -tags goolm -trimpath -ldflags "-s -w" -o "$APP/bin/mautrix-kakaotalk.new" ./cmd/mautrix-kakaotalk)
+    pkg_version="$(cat "$PKG/VERSION" 2>/dev/null || echo dev)"
+    (cd "$PKG/src" && CGO_ENABLED=1 go build -tags goolm -trimpath -ldflags "-s -w -X main.Tag=$pkg_version" -o "$APP/bin/mautrix-kakaotalk.new" ./cmd/mautrix-kakaotalk)
 fi
 chmod 755 "$APP/bin/mautrix-kakaotalk.new"
 mv "$APP/bin/mautrix-kakaotalk.new" "$APP/bin/mautrix-kakaotalk"
@@ -108,11 +114,21 @@ command -v codesign >/dev/null 2>&1 && codesign --force --sign - "$APP/bin/mautr
 step "KakaoTalk connection (sidecar)"
 mkdir -p "$APP/sidecar"
 cp "$PKG/sidecar/sidecar.mjs" "$PKG/sidecar/package.json" "$PKG/sidecar/package-lock.json" "$APP/sidecar/"
+# npm ships next to node (Homebrew and the official build alike); fall back to its
+# script if the symlink isn't there. Optional packages are other chat networks' native
+# code that this bridge doesn't use.
+node_dir="$(dirname "$NODE")"
+if [ -x "$node_dir/npm" ]; then
+    NPM="$node_dir/npm"
+elif [ -f "$node_dir/../lib/node_modules/npm/bin/npm-cli.js" ]; then
+    NPM="$NODE $node_dir/../lib/node_modules/npm/bin/npm-cli.js"
+else
+    die "npm not found next to $NODE"
+fi
 (
     cd "$APP/sidecar"
-    # npm ships with Node; make sure it finds the same node. Optional packages are other
-    # chat networks' native code that this bridge doesn't use.
-    PATH="$(dirname "$NODE"):$PATH" npm ci --omit=dev --omit=optional --ignore-scripts --no-audit --no-fund --loglevel=error
+    # shellcheck disable=SC2086  # NPM may be "node npm-cli.js"
+    PATH="$node_dir:$PATH" $NPM ci --omit=dev --omit=optional --ignore-scripts --no-audit --no-fund --loglevel=error
 )
 (cd "$APP/sidecar" && "$NODE" --input-type=module -e "await import('agent-messenger/kakaotalk'); await import('bson')") \
     || die "the sidecar's packages did not install correctly."

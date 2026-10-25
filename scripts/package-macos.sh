@@ -23,6 +23,9 @@ cp -R "$work/cmd" "$work/pkg" "$work/go.mod" "$work/go.sum" "$pkg/src/"
 cp "$work/sidecar/sidecar.mjs" "$work/sidecar/package.json" "$work/sidecar/package-lock.json" "$pkg/sidecar/"
 cp "$work/macos/install.sh" "$work/macos/kakao-beeper" "$pkg/"
 cp "$work/macos/README.md" "$pkg/README.md"
+# Read by Claude Code (and other coding agents) on the recipient's Mac.
+cp "$work/macos/CLAUDE.md" "$pkg/CLAUDE.md"
+cp "$work/macos/CLAUDE.md" "$pkg/AGENTS.md"
 chmod 755 "$pkg/install.sh" "$pkg/kakao-beeper"
 echo "$version" >"$pkg/VERSION"
 

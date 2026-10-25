@@ -16,7 +16,7 @@ Beeper  <->  bridge on your Mac  <->  KakaoTalk
   bridge signs in as the *tablet*. Your phone and the KakaoTalk Mac app stay signed in; a
   KakaoTalk you use on an iPad or Android tablet would be signed out.
 - **Your Mac has to be on.** Chats sync while the Mac is awake and you're logged in. The bridge
-  starts at login and reconnects after sleep.
+  starts at login and reconnects by itself after sleep or a network change.
 - **Credentials stay on your Mac** (`~/.config/agent-messenger`, readable only by you). Your
   KakaoTalk password is typed into the Terminal and never sent to Beeper.
 - You need a **Beeper account** and Beeper Desktop installed, macOS 13 or newer.
@@ -31,7 +31,9 @@ bash install.sh
 
 It installs into `~/.local/share/kakao-beeper` (nothing needs `sudo`), then walks you through:
 
-1. **KakaoTalk sign-in** — email and password (KakaoTalk may also ask for a code on your phone).
+1. **KakaoTalk sign-in** — your KakaoTalk email and password. The Terminal then shows a short
+   code; KakaoTalk on your phone asks you to approve a new device with that code. (If KakaoTalk
+   for Mac is installed, the email may be pre-filled from it.)
 2. **Beeper sign-in** — email and the code Beeper sends you.
 3. Starts the bridge and adds a login item so it starts every time you log in.
 
@@ -45,6 +47,7 @@ things first: `brew install go` and `xcode-select --install`.
 
 ```
 kakao-beeper status      is it running and signed in
+kakao-beeper doctor      full check-up; tells you what to do about anything that fails
 kakao-beeper logs        follow the logs
 kakao-beeper restart
 kakao-beeper setup       run the guided steps again
@@ -54,7 +57,12 @@ kakao-beeper uninstall   remove everything
 If the command isn't found, open a new Terminal window (the installer offers to add
 `~/.local/bin` to your PATH) or run `~/.local/bin/kakao-beeper`.
 
-macOS may show "Background items added" for `kakao-beeper` — that is the login item above.
+macOS may show a notification about a new background item — that is the login item above.
+
+## Updating
+
+Unpack the new package, then in its folder: `bash install.sh --no-setup` and
+`kakao-beeper restart`. Your sign-ins, chats and settings are kept.
 
 ## What works
 
@@ -64,9 +72,14 @@ edits/deletes, member join/leave, sending files other than images.
 
 ## Troubleshooting
 
-- *Nothing shows up in Beeper*: `kakao-beeper status`, then `kakao-beeper logs`. Make sure you sent
-  `login` to the bot.
-- *KakaoTalk signed itself out*: `kakao-beeper login-kakao`, then `kakao-beeper restart`.
+- First: `kakao-beeper doctor`.
+- *Nothing shows up in Beeper*: make sure you sent `login` to the bot; then `kakao-beeper logs`.
+- *"KakaoTalk session: BAD_CREDENTIALS"*: KakaoTalk signed the bridge out.
+  `kakao-beeper login-kakao`, then `kakao-beeper restart`.
+- *"kakao-kicked"*: another device signed in as the tablet. The bridge signs back in after a
+  minute. If you want to use that other device instead, `kakao-beeper stop` first.
 - *Phone says "new device"*: that is the bridge (tablet). Expected.
-- While the bridge runs, don't use another tool that signs in as the same tablet — they kick each
-  other out.
+- *Disconnected after sleep*: it reconnects on its own once the network is back; give it a minute.
+
+For anyone helping you with Claude Code or another coding assistant: `CLAUDE.md` in this folder
+explains the whole setup to it.

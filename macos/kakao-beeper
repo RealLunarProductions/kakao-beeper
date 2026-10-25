@@ -123,17 +123,89 @@ cmd_start() { [ -f "$PLIST" ] || die "not enabled. Run: kakao-beeper setup"; ser
 cmd_stop() { service_loaded && launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true; say "stopped (it starts again at next login; 'kakao-beeper disable' removes that)"; }
 cmd_restart() { [ -f "$PLIST" ] || die "not enabled. Run: kakao-beeper setup"; service_loaded || launchctl bootstrap "$DOMAIN" "$PLIST"; launchctl kickstart -k "$DOMAIN/$LABEL"; say "restarted"; }
 
+# Last bridge state the bridge sent to Beeper, from the JSON log: "CONNECTED",
+# "TRANSIENT_DISCONNECT (kakao-disconnected)", "BAD_CREDENTIALS (kakao-login-failed)"...
+session_state() {
+    [ -f "$DATA/logs/bridge.log" ] || return 0
+    local last ev er
+    last="$(grep '"bridge_state"' "$DATA/logs/bridge.log" | tail -n 1)"
+    [ -n "$last" ] || return 0
+    ev="$(printf '%s' "$last" | grep -o '"state_event":"[A-Za-z_]*"' | tail -n 1 | cut -d'"' -f4)"
+    er="$(printf '%s' "$last" | grep -o '"error":"[a-z-]*"' | head -n 1 | cut -d'"' -f4)"
+    printf '%s%s' "${ev:-unknown}" "${er:+ ($er)}"
+}
+
 cmd_status() {
     if service_loaded; then
-        launchctl print "$DOMAIN/$LABEL" | grep -E '^\s*(state|pid|last exit code|runs) =' || true
+        launchctl print "$DOMAIN/$LABEL" | grep -E '^[[:space:]]*(state|pid|last exit code|runs) =' || true
     else
         say "bridge: not loaded"
     fi
+    local st
+    st="$(session_state)"
+    [ -n "$st" ] && say "KakaoTalk session: $st"
     kakao_logged_in && say "KakaoTalk: signed in" || say "KakaoTalk: not signed in (kakao-beeper login-kakao)"
     beeper_logged_in && say "Beeper (bbctl): signed in" || say "Beeper (bbctl): not signed in (kakao-beeper login-beeper)"
     if [ -f "$DATA/logs/bridge.log" ]; then
         say ""; say "last log lines:"; tail -n 5 "$DATA/logs/bridge.log" | cut -c1-220
     fi
+}
+
+# Checks every link of the chain and prints OK/FAIL per line; exits 1 if anything failed.
+cmd_doctor() {
+    local fails=0
+    ok() { say "  OK    $1"; }
+    bad() { say "  FAIL  $1"; fails=$((fails + 1)); }
+    say "kakao-beeper doctor"
+    say "  macOS $(sw_vers -productVersion 2>/dev/null || echo '?'), $(uname -m), data in $DATA"
+
+    if "$NODE" --version >/dev/null 2>&1; then ok "node runs: $NODE ($("$NODE" --version))"; else bad "node does not run: $NODE (re-run install.sh)"; fi
+    if (cd "$APP/sidecar" 2>/dev/null && "$NODE" --input-type=module -e "await import('agent-messenger/kakaotalk')" 2>/dev/null); then
+        ok "sidecar packages import"
+    else bad "sidecar packages missing or broken (re-run install.sh)"; fi
+    if "$APP/bin/mautrix-kakaotalk" --version >/dev/null 2>&1; then ok "bridge binary runs ($("$APP/bin/mautrix-kakaotalk" --version 2>/dev/null | head -n 1))"
+    else bad "bridge binary does not run: $APP/bin/mautrix-kakaotalk (wrong CPU type or Gatekeeper; re-run install.sh)"; fi
+    if "$BBCTL" --version >/dev/null 2>&1; then ok "bbctl runs ($("$BBCTL" --version 2>/dev/null | head -n 1))"; else bad "bbctl does not run: $BBCTL"; fi
+
+    if [ -f "$KAKAO_CREDS" ]; then
+        local mode
+        mode="$(stat -f '%Lp' "$KAKAO_CREDS" 2>/dev/null || stat -c '%a' "$KAKAO_CREDS" 2>/dev/null || echo '?')"
+        if kakao_logged_in; then ok "KakaoTalk credentials present (mode $mode)"; else bad "KakaoTalk credentials file exists but no account is active (kakao-beeper login-kakao)"; fi
+    else bad "no KakaoTalk credentials (kakao-beeper login-kakao)"; fi
+    if beeper_logged_in; then ok "bbctl signed in to Beeper"; else bad "bbctl not signed in (kakao-beeper login-beeper)"; fi
+
+    if [ -f "$DATA/config.yaml" ]; then
+        grep -q 'software: hungry' "$DATA/config.yaml" && ok "config.yaml targets Beeper" || bad "config.yaml is not a Beeper config (kakao-beeper configure)"
+        grep -q '^network:' "$DATA/config.yaml" && ok "config.yaml has the network section" || bad "config.yaml lacks the network section (kakao-beeper configure)"
+        local cfg_node cfg_sc
+        cfg_node="$(sed -n 's/^    node_path: //p' "$DATA/config.yaml" | head -n 1)"
+        cfg_sc="$(sed -n 's/^    sidecar_script: //p' "$DATA/config.yaml" | head -n 1)"
+        [ -x "${cfg_node:-/nonexistent}" ] && ok "config node_path exists" || bad "config node_path missing: ${cfg_node:-unset} (kakao-beeper configure after deleting the network section, or fix the path)"
+        [ -f "${cfg_sc:-/nonexistent}" ] && ok "config sidecar_script exists" || bad "config sidecar_script missing: ${cfg_sc:-unset}"
+    else bad "no config.yaml (kakao-beeper setup)"; fi
+
+    if [ -f "$PLIST" ]; then ok "login item installed"; else bad "login item not installed (kakao-beeper enable)"; fi
+    if service_loaded; then
+        local pid
+        pid="$(launchctl print "$DOMAIN/$LABEL" 2>/dev/null | sed -n 's/^[[:space:]]*pid = //p' | head -n 1)"
+        if [ -n "$pid" ]; then ok "bridge running (pid $pid)"; else bad "bridge loaded but not running (kakao-beeper logs)"; fi
+    else bad "bridge not loaded in launchd (kakao-beeper start)"; fi
+    local st
+    st="$(session_state)"
+    case "$st" in
+        CONNECTED*) ok "KakaoTalk session: $st" ;;
+        "") say "  --    no bridge state logged yet" ;;
+        *BAD_CREDENTIALS*) bad "KakaoTalk session: $st (kakao-beeper login-kakao, then restart)" ;;
+        *) bad "KakaoTalk session: $st (see kakao-beeper logs; reconnects on its own when the network is back)" ;;
+    esac
+    [ -f "$DATA/sh-kakaotalk.db" ] && ok "bridge database present" || say "  --    no bridge database yet (appears after the first start)"
+    if [ -f "$DATA/logs/bridge.log" ]; then
+        local errs
+        errs="$(grep -E '"level":"(error|fatal)"' "$DATA/logs/bridge.log" | tail -n 3 | cut -c1-200)"
+        [ -n "$errs" ] && { say "  last errors in bridge.log:"; printf '%s\n' "$errs" | sed 's/^/        /'; }
+    fi
+    say ""
+    if [ "$fails" = 0 ]; then say "all checks passed"; else say "$fails check(s) failed"; return 1; fi
 }
 
 cmd_logs() {
@@ -157,7 +229,8 @@ cmd_setup() {
     say ""
     say "== Last step, in Beeper"
     say "Open Beeper Desktop, start a new chat with  $BOT  and send:  login"
-    say "Your KakaoTalk chats then appear in Beeper (give it a minute). Check on it any time with: kakao-beeper status"
+    say "Your KakaoTalk chats then appear in Beeper (give it a minute)."
+    say "Check on it any time with:  kakao-beeper status     full check-up:  kakao-beeper doctor"
 }
 
 cmd_uninstall() {
@@ -183,6 +256,7 @@ kakao-beeper — KakaoTalk in Beeper
 
   setup          guided: sign in to KakaoTalk and Beeper, configure, start the bridge
   status         is it running and signed in
+  doctor         check every part and say what to do about failures
   logs           follow the bridge logs
   restart | stop | start
   login-kakao    sign in to KakaoTalk again
@@ -196,6 +270,7 @@ EOF
 case "${1:-help}" in
     setup) cmd_setup ;;
     status) cmd_status ;;
+    doctor) cmd_doctor ;;
     logs) cmd_logs ;;
     start) cmd_start ;;
     stop) cmd_stop ;;
