@@ -35,6 +35,14 @@ The sidecar copies the credentials to `~/.local/share/kakao-beeper/agent-messeng
 LOGINLIST only returns chats changed since the saved sync state, so the sidecar
 drops that state on every start and always receives the full chat list.
 
+## macOS
+
+`macos/` holds an installer for other people's Macs (launchd instead of systemd, downloads
+Node and `bbctl` itself, guided sign-in). `scripts/package-macos.sh` builds the tarball to send;
+`.github/workflows/release-macos.yml` builds the macOS binaries on a macOS runner (the bridge
+needs cgo for sqlite, so it can't be cross-compiled from Linux). See `macos/README.md`, which is
+the file the recipient reads.
+
 ## Autostart in every session
 
 After the first `scripts/run.sh` setup, stop it (Ctrl+C) and run `scripts/install-service.sh`.

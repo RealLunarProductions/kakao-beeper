@@ -57,7 +57,7 @@ if [ -z "$NODE" ]; then
     base="node-$NODE_VERSION-darwin-$nodearch"
     say "No Node.js $NODE_MIN_MAJOR.$NODE_MIN_MINOR+ found; downloading the official build ($base)"
     work="$(mktemp -d)"
-    curl -fL --retry 3 -o "$work/node.tar.gz" "https://nodejs.org/dist/$NODE_VERSION/$base.tar.gz"
+    curl -fL --progress-bar --retry 3 -o "$work/node.tar.gz" "https://nodejs.org/dist/$NODE_VERSION/$base.tar.gz"
     curl -fsSL --retry 3 -o "$work/SHASUMS256.txt" "https://nodejs.org/dist/$NODE_VERSION/SHASUMS256.txt"
     want="$(grep " $base.tar.gz\$" "$work/SHASUMS256.txt" | cut -d' ' -f1)"
     [ -n "$want" ] && [ "$(sha256 "$work/node.tar.gz")" = "$want" ] || die "Node.js download failed its checksum."
@@ -77,7 +77,7 @@ if [ -n "${KB_BBCTL:-}" ]; then
 else
     case "$ARCH" in arm64) want="$BBCTL_SHA_arm64" ;; *) want="$BBCTL_SHA_amd64" ;; esac
     if [ ! -x "$APP/bin/bbctl" ] || [ "$(sha256 "$APP/bin/bbctl")" != "$want" ]; then
-        curl -fL --retry 3 -o "$APP/bin/bbctl.new" "https://github.com/beeper/bridge-manager/releases/download/$BBCTL_VERSION/bbctl-macos-$ARCH"
+        curl -fL --progress-bar --retry 3 -o "$APP/bin/bbctl.new" "https://github.com/beeper/bridge-manager/releases/download/$BBCTL_VERSION/bbctl-macos-$ARCH"
         [ "$(sha256 "$APP/bin/bbctl.new")" = "$want" ] || { rm -f "$APP/bin/bbctl.new"; die "bbctl download failed its checksum."; }
         mv "$APP/bin/bbctl.new" "$APP/bin/bbctl"
     fi

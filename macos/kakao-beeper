@@ -173,7 +173,7 @@ cmd_uninstall() {
     if ask_yes "Delete all bridge data and the program files ($DATA)?" y; then
         rm -rf "$DATA"
         rm -f "$HOME/.local/bin/kakao-beeper"
-        say "Removed. (Installed with Homebrew node? Nothing of that was touched.)"
+        say "Removed."
     fi
 }
 
