@@ -1,0 +1,39 @@
+name: macOS package
+
+# Builds the bridge natively on macOS (it needs cgo for sqlite, so it can't be
+# cross-compiled from Linux) and bundles it into the install package.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: macos-14
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build bridge (arm64 + amd64)
+        run: |
+          mkdir -p out
+          CGO_ENABLED=1 GOARCH=arm64 go build -tags goolm -trimpath -ldflags "-s -w" -o out/mautrix-kakaotalk-darwin-arm64 ./cmd/mautrix-kakaotalk
+          CGO_ENABLED=1 GOARCH=amd64 CC="clang -arch x86_64" go build -tags goolm -trimpath -ldflags "-s -w" -o out/mautrix-kakaotalk-darwin-amd64 ./cmd/mautrix-kakaotalk
+          file out/*
+          ./out/mautrix-kakaotalk-darwin-arm64 --version
+      - name: Package
+        run: KB_BIN_DIR=out scripts/package-macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kakao-beeper-macos
+          path: dist/*.tar.gz
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.gz
