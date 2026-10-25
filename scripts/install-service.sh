@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install kakao-beeper.service so the bridge starts with every graphical session
-# (Noctalia and all rices) and whenever beeper.service starts.
+# and whenever beeper.service starts.
 # Run scripts/run.sh once first: it logs bbctl in and writes the config.
 set -euo pipefail
 
@@ -25,11 +25,9 @@ echo "== Building bridge"
 
 echo "== Installing $unit_dst"
 mkdir -p "$unit_dir"
-install -m 644 "$unit_src" "$unit_dst"
-if command -v chezmoi >/dev/null && chezmoi managed --include=files | grep -q '^\.config/systemd/user/beeper\.service$'; then
-    chezmoi add "$unit_dst"
-    echo "   added to chezmoi"
-fi
+# The unit file assumes the checkout lives at ~/kakao-beeper; point it at the real path.
+sed "s#%h/kakao-beeper#$here#g" "$unit_src" >"$unit_dst"
+chmod 644 "$unit_dst"
 
 systemctl --user daemon-reload
 systemctl --user enable kakao-beeper.service

@@ -9,12 +9,16 @@ connector (`cmd/mautrix-kakaotalk`, `pkg/connector`) drives a small Node sidecar
 Beeper  <--websocket-->  mautrix-kakaotalk (Go)  <--JSON lines/stdio-->  sidecar.mjs (Node)  <--LOCO-->  KakaoTalk
 ```
 
-Unofficial: LOCO access breaks Kakao's terms of service and may get the account limited.
+**Unofficial.** LOCO access breaks Kakao's terms of service and may get your account limited.
+This project is not affiliated with, endorsed by or supported by Kakao Corp. or Beeper;
+"KakaoTalk" and its logo are trademarks of Kakao Corp. Use it at your own risk.
+
+Platforms: Linux (systemd, below) and macOS (`macos/`, with a guided installer).
 
 ## Device slots
 
 The session uses the **tablet slot** (Android sub-device), so the phone and the
-Wine KakaoTalk PC app (PC slot) stay logged in. Never log in with
+KakaoTalk PC app (PC slot) stay logged in. Never log in with
 `--device-type pc` or `--force`.
 
 Only one LOCO connection per device can exist. While the bridge runs, the
@@ -46,10 +50,10 @@ the file the recipient reads.
 ## Autostart in every session
 
 After the first `scripts/run.sh` setup, stop it (Ctrl+C) and run `scripts/install-service.sh`.
-It installs `contrib/systemd/kakao-beeper.service` into `~/.config/systemd/user` (and chezmoi),
-wanted by both `graphical-session.target` and `beeper.service`: the bridge comes up with every
-graphical session (Hyprland Noctalia and all `~/rices` sessions) and whenever Beeper is started.
-Closing Beeper leaves it running; it stops with the session.
+It builds the bridge and installs `contrib/systemd/kakao-beeper.service` into
+`~/.config/systemd/user` (pointing at this checkout), wanted by both `graphical-session.target`
+and `beeper.service`: the bridge comes up with every graphical session and whenever Beeper is
+started. Closing Beeper leaves it running; it stops with the session.
 
 - Logs: `journalctl --user -u kakao-beeper -f` (also `~/.local/share/kakao-beeper/logs/bridge.log`)
 - After pulling changes: `go build -tags goolm -o mautrix-kakaotalk ./cmd/mautrix-kakaotalk && systemctl --user restart kakao-beeper`
@@ -82,6 +86,13 @@ the next API call, so the sidecar takes care of staying connected:
 
 ## Drafting before sending
 
-Once a chat is bridged, Claude drafts into Beeper instead of sending: the Beeper
-MCP `focus_app` tool with `chatID` + `draftText` opens the chat with the text in
-the composer, and you review and press Enter yourself.
+If you use an AI assistant with the Beeper Desktop MCP server, have it draft instead of send:
+the MCP `focus_app` tool with `chatID` + `draftText` opens the chat with the text in the
+composer, and you review and press Enter yourself.
+
+## Credits
+
+Built on [mautrix-go](https://github.com/mautrix/go) (bridgev2) and
+[agent-messenger](https://github.com/agent-messenger/agent-messenger), whose KakaoTalk LOCO client
+builds on earlier protocol work (openkakao, node-kakao). Self-hosting uses Beeper's
+[bridge-manager](https://github.com/beeper/bridge-manager) (`bbctl`). See `THIRD_PARTY_NOTICES.md`.
