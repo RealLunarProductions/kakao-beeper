@@ -47,7 +47,7 @@ func (cl *CredentialLogin) Start(ctx context.Context) (*bridgev2.LoginStep, erro
 	err = sc.Call(ctx, "start", nil, &profile)
 	sc.Stop()
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect with agent-kakaotalk credentials (run `agent-kakaotalk auth login` first): %w", err)
+		return nil, fmt.Errorf("failed to connect with the stored KakaoTalk credentials (sign in first: `agent-kakaotalk auth login`, or `kakao-beeper login-kakao` on macOS): %w", err)
 	}
 	remoteName := profile.Nickname
 	if remoteName == "" {

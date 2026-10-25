@@ -3,8 +3,11 @@ package connector
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -88,9 +91,14 @@ type KakaoClient struct {
 	Main      *KakaoConnector
 	UserLogin *bridgev2.UserLogin
 
-	scLock   sync.RWMutex
-	sidecar  *Sidecar
-	stopping bool
+	scLock    sync.RWMutex
+	sidecar   *Sidecar
+	stopping  bool
+	failures  int // consecutive failed starts / early exits, for restart backoff
+	lastStart time.Time
+	// disconnected is set while the sidecar reports a lost LOCO session; the next
+	// "connected" event then triggers a chat resync to catch up on missed messages.
+	disconnected atomic.Bool
 
 	cacheLock sync.RWMutex
 	chats     map[string]*KakaoChat
@@ -130,34 +138,108 @@ func (kc *KakaoClient) Connect(ctx context.Context) {
 	}
 	kc.scLock.Lock()
 	kc.sidecar = sc
+	kc.lastStart = time.Now()
 	kc.scLock.Unlock()
 	go kc.watchSidecar(log, sc)
 
 	var profile KakaoProfile
 	if err = sc.Call(ctx, "start", nil, &profile); err != nil {
-		log.Err(err).Msg("Failed to log in to KakaoTalk")
-		kc.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateBadCredentials, Error: "kakao-login-failed", Message: err.Error()})
+		if isAuthError(err) {
+			// Only a new `auth login` can fix this; don't keep hammering KakaoTalk.
+			log.Err(err).Msg("KakaoTalk rejected the stored credentials")
+			kc.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateBadCredentials, Error: "kakao-login-failed", Message: err.Error()})
+			kc.scLock.Lock()
+			kc.stopping = true
+			kc.sidecar = nil
+			kc.scLock.Unlock()
+			sc.Stop()
+			return
+		}
+		// Offline, DNS not up yet after wake, LOCO booking down: stop this sidecar and
+		// let watchSidecar start a fresh one after a backoff.
+		kc.scLock.Lock()
+		kc.failures++
+		failures := kc.failures
+		kc.scLock.Unlock()
+		log.Err(err).Int("failures", failures).Msg("Failed to connect to KakaoTalk, will retry")
+		kc.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateTransientDisconnect, Error: "kakao-start-failed", Message: err.Error()})
+		sc.Stop()
 		return
 	}
+	kc.scLock.Lock()
+	kc.failures = 0
+	kc.scLock.Unlock()
+	kc.disconnected.Store(false)
 	kc.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnected})
 	go kc.syncChats(log.WithContext(context.WithoutCancel(ctx)))
+}
+
+// Sidecar exit codes with a meaning (sidecar/sidecar.mjs).
+const (
+	exitKicked         = 3  // another device took the tablet slot
+	exitBadCredentials = 78 // KakaoTalk rejected the stored token
+)
+
+var authErrorCodes = map[string]bool{
+	"invalid_access_token": true,
+	"login_rejected":       true,
+	"not_authenticated":    true,
+	"missing_token":        true,
+	"missing_user_id":      true,
+}
+
+// isAuthError reports whether a sidecar error means the credentials are bad (as
+// opposed to the network being down), so the bridge knows whether retrying helps.
+func isAuthError(err error) bool {
+	var se *SidecarError
+	if errors.As(err, &se) {
+		return authErrorCodes[se.Code] || strings.Contains(se.Message, "No KakaoTalk credentials found")
+	}
+	return false
+}
+
+// restartDelay grows with consecutive failures: 10 s, 20 s, 40 s ... capped at 5 min.
+func restartDelay(failures int) time.Duration {
+	d := 10 * time.Second << min(max(failures, 0), 5)
+	return min(d, 5*time.Minute)
 }
 
 // watchSidecar restarts the sidecar if it dies while we're supposed to be connected.
 func (kc *KakaoClient) watchSidecar(log zerolog.Logger, sc *Sidecar) {
 	<-sc.Done
+	code := sc.ExitCode()
 	kc.scLock.Lock()
+	if code == exitBadCredentials {
+		kc.stopping = true
+	}
 	stopping := kc.stopping
 	if kc.sidecar == sc {
 		kc.sidecar = nil
 	}
+	// An exit shortly after a start counts as a failure (crash loops back off too);
+	// a long-running sidecar that died resets the counter.
+	if !stopping && code != exitKicked {
+		if time.Since(kc.lastStart) < time.Minute {
+			kc.failures++
+		} else {
+			kc.failures = 0
+		}
+	}
+	failures := kc.failures
 	kc.scLock.Unlock()
 	if stopping {
 		return
 	}
-	log.Warn().Msg("Sidecar exited unexpectedly, restarting in 10 seconds")
+	delay := restartDelay(failures)
+	if code == exitKicked {
+		// Logging in again kicks the other device back; give whoever took the slot a
+		// minute instead of fighting over it every few seconds.
+		delay = time.Minute
+	}
+	log.Warn().Int("exit_code", code).Dur("retry_in", delay).Msg("Sidecar exited, restarting")
+	kc.disconnected.Store(true)
 	kc.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateTransientDisconnect, Error: "kakao-sidecar-exited"})
-	time.Sleep(10 * time.Second)
+	time.Sleep(delay)
 	kc.scLock.RLock()
 	stopping = kc.stopping
 	kc.scLock.RUnlock()
@@ -232,8 +314,28 @@ func (kc *KakaoClient) handleEvent(ctx context.Context, name string, data json.R
 		})
 	case "connected":
 		kc.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnected})
+		if kc.disconnected.Swap(false) {
+			// The sidecar logged in again with its saved sync state, so getChats now
+			// returns the chats that changed meanwhile; resyncing them forward-backfills
+			// whatever arrived while the session was down.
+			log.Info().Msg("KakaoTalk session restored, resyncing chats")
+			go kc.syncChats(ctx)
+		}
 	case "disconnected":
+		kc.disconnected.Store(true)
 		kc.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateTransientDisconnect, Error: "kakao-disconnected"})
+	case "kicked":
+		kc.disconnected.Store(true)
+		log.Warn().RawJSON("data", data).Msg("Another device took the KakaoTalk tablet slot; the sidecar will log in again in a minute")
+		kc.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateTransientDisconnect, Error: "kakao-kicked"})
+	case "fatal":
+		var info struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		}
+		_ = json.Unmarshal(data, &info)
+		log.Error().Str("code", info.Code).Str("message", info.Message).Msg("KakaoTalk rejected the stored credentials")
+		kc.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateBadCredentials, Error: "kakao-login-failed", Message: info.Message})
 	case "error":
 		log.Warn().RawJSON("data", data).Msg("Sidecar reported an error")
 	default:

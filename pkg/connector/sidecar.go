@@ -187,6 +187,14 @@ func (sc *Sidecar) Call(ctx context.Context, method string, params any, out any)
 	}
 }
 
+// ExitCode returns the process exit code; only meaningful after Done is closed.
+func (sc *Sidecar) ExitCode() int {
+	if sc.cmd.ProcessState == nil {
+		return -1
+	}
+	return sc.cmd.ProcessState.ExitCode()
+}
+
 // Stop closes stdin, which makes the sidecar log out of LOCO and exit.
 func (sc *Sidecar) Stop() {
 	_ = sc.stdin.Close()
