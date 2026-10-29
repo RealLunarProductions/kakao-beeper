@@ -163,7 +163,7 @@ func (kc *KakaoClient) GetUserInfo(ctx context.Context, ghost *bridgev2.Ghost) (
 }
 
 var roomCaps = &event.RoomFeatures{
-	ID:            "kakaotalk.capabilities.2026_10_23",
+	ID:            "kakaotalk.capabilities.2026_10_28",
 	MaxTextLength: 10000,
 	ReadReceipts:  true,
 	File: event.FileFeatureMap{
@@ -171,9 +171,36 @@ var roomCaps = &event.RoomFeatures{
 			MimeTypes: map[string]event.CapabilitySupportLevel{
 				"image/jpeg": event.CapLevelFullySupported,
 				"image/png":  event.CapLevelFullySupported,
+				"image/gif":  event.CapLevelFullySupported,
+				"image/*":    event.CapLevelPartialSupport, // sent as a file
 			},
 			Caption: event.CapLevelRejected,
 			MaxSize: 30 << 20,
+		},
+		event.MsgVideo: {
+			MimeTypes: map[string]event.CapabilitySupportLevel{
+				"video/mp4": event.CapLevelFullySupported,
+				"video/*":   event.CapLevelPartialSupport, // sent as a file
+			},
+			Caption: event.CapLevelRejected,
+			MaxSize: 100 << 20,
+		},
+		event.MsgAudio: {
+			MimeTypes: map[string]event.CapabilitySupportLevel{
+				"audio/mp4":   event.CapLevelFullySupported,
+				"audio/x-m4a": event.CapLevelFullySupported,
+				"audio/aac":   event.CapLevelFullySupported,
+				"audio/*":     event.CapLevelPartialSupport, // sent as a file
+			},
+			Caption: event.CapLevelRejected,
+			MaxSize: 100 << 20,
+		},
+		event.MsgFile: {
+			MimeTypes: map[string]event.CapabilitySupportLevel{
+				"*/*": event.CapLevelFullySupported,
+			},
+			Caption: event.CapLevelRejected,
+			MaxSize: 100 << 20,
 		},
 	},
 }

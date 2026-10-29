@@ -124,9 +124,9 @@ func (kc *KakaoConnector) GetCapabilities() *bridgev2.NetworkGeneralCapabilities
 }
 
 // Bump info when the bridge info content changes so existing rooms get it resent
-// (2: network icon, 3: m.bridge network section).
+// (2: network icon, 3: m.bridge network section; caps 2: video/audio/files).
 func (kc *KakaoConnector) GetBridgeInfoVersion() (info, capabilities int) {
-	return 3, 1
+	return 3, 2
 }
 
 var _ bridgev2.PortalBridgeInfoFillingNetwork = (*KakaoConnector)(nil)

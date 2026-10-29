@@ -235,6 +235,16 @@ const methods = {
   sendMessage: async (p) =>
     plain(await need().sendMessage(p.chat_id, p.text, p.reply_to ? { replyTo: p.reply_to } : undefined)),
   sendPhoto: async (p) => plain(await need().sendPhoto(p.chat_id, Buffer.from(p.data_b64, 'base64'), p.filename)),
+  sendMedia: async (p) => {
+    const data = Buffer.from(p.data_b64, 'base64')
+    const c = need()
+    switch (p.kind) {
+      case 'photo': return plain(await c.sendPhoto(p.chat_id, data, p.filename))
+      case 'video': return plain(await c.sendVideo(p.chat_id, data, p.filename))
+      case 'audio': return plain(await c.sendAudio(p.chat_id, data, p.filename))
+      default: return plain(await c.sendFile(p.chat_id, data, p.filename || 'file', p.mime || undefined))
+    }
+  },
   sendTyping: async (p) => plain(await need().sendTyping(p.chat_id)),
   markRead: async (p) => plain(await need().markRead(p.chat_id, p.log_id)),
 }
