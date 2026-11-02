@@ -20,6 +20,11 @@
 // exits with EXIT_KICKED when another device takes the slot and with
 // EXIT_BAD_CREDENTIALS when KakaoTalk rejects the stored token; the bridge reads
 // the exit code to decide whether and when to start it again.
+//
+// Access tokens expire (about a week). When LOCO login answers
+// invalid_access_token, the sidecar trades the saved refresh token for a new
+// access token (refreshCredentials), saves it, and logs in again; only a failed
+// refresh ends in EXIT_BAD_CREDENTIALS.
 
 import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -36,7 +41,9 @@ if (!existsSync(join(stateDir, CREDENTIALS_FILE)) && existsSync(join(cliDir, CRE
 process.env.AGENT_MESSENGER_CONFIG_DIR = stateDir
 
 // Imported after the env var is set so agent-messenger picks up stateDir.
-const { KakaoTalkClient, KakaoTalkListener } = await import('agent-messenger/kakaotalk')
+const { KakaoTalkClient, KakaoTalkListener, KakaoCredentialManager, refreshKakaoOAuthToken } = await import(
+  'agent-messenger/kakaotalk'
+)
 const { Long } = await import('bson')
 
 // Exit codes the bridge understands (pkg/connector/client.go).
@@ -79,6 +86,67 @@ function withTimeout(promise, ms, what) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
 }
 
+const isExpiredToken = (err) => err?.code === 'invalid_access_token'
+
+// Trades the saved refresh token for a new access token and saves both. The CLI's
+// copy is the same device login, so it gets the new tokens too (otherwise a
+// rotated refresh token would leave the CLI with a dead one). Returns the
+// credentials for KakaoTalkClient.login().
+async function refreshCredentials() {
+  const store = new KakaoCredentialManager(stateDir)
+  const account = await store.getAccount()
+  if (!account) throw Object.assign(new Error('No KakaoTalk credentials found'), { code: 'not_authenticated' })
+  const res = await refreshKakaoOAuthToken({
+    accessToken: account.oauth_token,
+    refreshToken: account.refresh_token,
+    deviceUuid: account.device_uuid,
+  })
+  const updated = {
+    ...account,
+    oauth_token: res.accessToken,
+    refresh_token: res.refreshToken,
+    updated_at: new Date().toISOString(),
+  }
+  await store.setAccount(updated)
+  try {
+    const cli = new KakaoCredentialManager(cliDir)
+    const cliAccount = await cli.getAccount(account.account_id)
+    if (cliAccount?.device_uuid === account.device_uuid) await cli.setAccount({ ...cliAccount, ...updated })
+  } catch (err) {
+    log('could not update the CLI credentials (ignored):', err?.message ?? err)
+  }
+  log(`access token refreshed${res.expiresIn ? ` (expires in ${Math.round(res.expiresIn / 3600)} h)` : ''}`)
+  return {
+    oauthToken: updated.oauth_token,
+    userId: updated.user_id,
+    deviceUuid: updated.device_uuid,
+    deviceType: updated.device_type,
+  }
+}
+
+// acquireSession(), refreshing the token once if KakaoTalk says it expired.
+async function acquireWithRefresh(c) {
+  try {
+    return await c.acquireSession()
+  } catch (err) {
+    if (!isExpiredToken(err)) throw err
+    log('access token expired; refreshing')
+    let creds
+    try {
+      creds = await refreshCredentials()
+    } catch (refreshErr) {
+      log('token refresh failed:', refreshErr?.code ?? '', refreshErr?.message ?? refreshErr)
+      // Network trouble is retryable; anything else means a real re-login is needed.
+      if (/refresh_(timeout|request_failed|http_error)/.test(refreshErr?.code ?? '')) {
+        throw Object.assign(new Error(refreshErr.message), { code: refreshErr.code })
+      }
+      throw err
+    }
+    await c.login(creds)
+    return await c.acquireSession()
+  }
+}
+
 function dropSyncState() {
   for (const name of readdirSync(stateDir)) {
     if (name.startsWith('kakaotalk-sync-state-')) rmSync(join(stateDir, name), { force: true })
@@ -117,7 +185,7 @@ async function reconnectLoop() {
       if (closing) return
       if (client.isConnected()) return // an API call already reconnected
       try {
-        await client.acquireSession()
+        await acquireWithRefresh(client)
         log('LOCO session restored')
         return
       } catch (err) {
@@ -171,7 +239,7 @@ async function start() {
   try {
     // Fail here (with agent-messenger's error code) rather than inside the listener,
     // which swallows login errors into an 'error' event.
-    await c.acquireSession()
+    await acquireWithRefresh(c)
   } catch (err) {
     unsubscribeSession?.()
     unsubscribeSession = null

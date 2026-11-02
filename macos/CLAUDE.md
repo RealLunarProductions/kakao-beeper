@@ -82,8 +82,10 @@ bridge sends a CHATINFO round trip every 90 s as a health check — that is norm
   or the `agent-kakaotalk` CLI). The sidecar exits with code 3 and the bridge signs in
   again after one minute — which kicks the other device back. If the person wants the
   other device, `kakao-beeper stop` (or `disable`) while they use it.
-- `BAD_CREDENTIALS (kakao-login-failed)`: KakaoTalk rejected the token (sidecar exit code
-  78). The bridge stops retrying. Fix: `kakao-beeper login-kakao`, then `kakao-beeper restart`.
+- Access tokens expire after about a week; the sidecar trades the saved refresh token for
+  a new one by itself (log: "access token refreshed").
+- `BAD_CREDENTIALS (kakao-login-failed)`: KakaoTalk rejected the token and the refresh
+  failed too (sidecar exit code 78). The bridge stops retrying. Fix: `kakao-beeper login-kakao`, then `kakao-beeper restart`.
 - Only one LOCO connection per device exists. Running `agent-kakaotalk` (the CLI the
   credentials came from) while the bridge is up kicks the bridge. Use Beeper instead.
 
