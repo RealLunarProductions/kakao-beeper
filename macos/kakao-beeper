@@ -28,7 +28,10 @@ ask_yes() { # ask_yes "question" default(y|n)
 }
 
 kakao_logged_in() { "$NODE" "$KAKAO_CLI" auth status >/dev/null 2>&1; }
-beeper_logged_in() { "$BBCTL" whoami 2>&1 | grep -q '^User ID:'; }
+beeper_whoami() { "$BBCTL" whoami 2>&1 || true; }
+# No pipe into grep -q here: grep exits on the first match, bbctl dies of SIGPIPE on
+# its next line, and pipefail then reports a signed-in account as signed out.
+beeper_logged_in() { case "$(beeper_whoami)" in *"User ID:"*) return 0 ;; *) return 1 ;; esac; }
 service_loaded() { launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; }
 
 cmd_login_kakao() {
@@ -45,7 +48,14 @@ cmd_login_kakao() {
 cmd_login_beeper() {
     say "== Beeper login (bbctl)"
     "$BBCTL" login
-    beeper_logged_in || die "bbctl login did not complete."
+    local i out
+    for i in 1 2 3; do
+        beeper_logged_in && return 0
+        sleep 2
+    done
+    out="$(beeper_whoami)"
+    printf '%s\n' "bbctl whoami said:" "$out" >&2
+    die "bbctl login did not complete. Run 'kakao-beeper setup' again; if this repeats, send the lines above."
 }
 
 cmd_configure() {

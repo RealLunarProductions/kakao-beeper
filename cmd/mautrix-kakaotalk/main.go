@@ -19,7 +19,7 @@ var m = mxmain.BridgeMain{
 	Name:        "kakao-beeper",
 	URL:         "https://github.com/RealLunarProductions/kakao-beeper",
 	Description: "A Matrix-KakaoTalk puppeting bridge for Beeper.",
-	Version:     "0.1.0",
+	Version:     "0.1.1",
 	Connector:   &connector.KakaoConnector{},
 }
 
