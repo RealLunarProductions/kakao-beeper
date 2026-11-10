@@ -1,0 +1,26 @@
+[Unit]
+Description=KakaoTalk bridge for Beeper (mautrix-kakaotalk)
+Documentation=https://github.com/RealLunarProductions/kakao-beeper
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/var/lib/kakao-beeper/config.yaml
+
+[Service]
+User=kakao
+Group=kakao
+WorkingDirectory=/var/lib/kakao-beeper
+Environment=HOME=/var/lib/kakao-beeper
+ExecStart=/opt/kakao-beeper/mautrix-kakaotalk -c config.yaml
+Restart=always
+RestartSec=30
+TimeoutStopSec=20
+# 1 GB VM: keep the bridge from taking the box down with it.
+MemoryMax=600M
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/kakao-beeper
+
+[Install]
+WantedBy=multi-user.target
