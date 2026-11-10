@@ -2,6 +2,7 @@ package connector
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"path"
@@ -16,6 +17,7 @@ import (
 
 // LOCO message types (agent-messenger KAKAO_MESSAGE_TYPE + node-kakao KnownChatType).
 const (
+	typeFeed       = 0
 	typeText       = 1
 	typePhoto      = 2
 	typeVideo      = 3
@@ -27,7 +29,121 @@ const (
 	typeSticker    = 25
 	typeReply      = 26
 	typeMultiPhoto = 27
+	typeCall       = 51
+
+	// Set on the type of a message its sender deleted for everyone.
+	flagDeleted = 16384
 )
+
+// Feed (system) message types; the payload is JSON in the message text.
+const (
+	feedInvite       = 1
+	feedLeave        = 2
+	feedSecretLeave  = 3
+	feedOpenJoin     = 4
+	feedOpenKicked   = 6
+	feedDeleteToAll  = 14
+	feedHandOverHost = 15
+)
+
+// Emoticon attachments carry a CDN path like "4412207.emot_001.webp".
+const emoticonCDN = "https://item.kakaocdn.net/dw/"
+
+type feedMember struct {
+	NickName string `json:"nickName"`
+}
+
+type kakaoFeed struct {
+	FeedType int          `json:"feedType"`
+	LogID    json.Number  `json:"logId"`
+	Hidden   bool         `json:"hidden"`
+	Inviter  *feedMember  `json:"inviter"`
+	Member   *feedMember  `json:"member"`
+	Members  []feedMember `json:"members"`
+}
+
+// parseFeed returns the payload of a feed message, or nil for anything else.
+func parseFeed(msg *KakaoMessage) *kakaoFeed {
+	if msg.BaseKind() != typeFeed || msg.Message == "" {
+		return nil
+	}
+	var feed kakaoFeed
+	if json.Unmarshal([]byte(msg.Message), &feed) != nil {
+		return nil
+	}
+	return &feed
+}
+
+func feedNames(feed *kakaoFeed) string {
+	names := make([]string, 0, len(feed.Members)+1)
+	for _, m := range feed.Members {
+		names = append(names, m.NickName)
+	}
+	if feed.Member != nil {
+		names = append(names, feed.Member.NickName)
+	}
+	return strings.Join(names, ", ")
+}
+
+// feedText mirrors the system lines KakaoTalk shows in the chat.
+func feedText(feed *kakaoFeed) string {
+	names := feedNames(feed)
+	switch feed.FeedType {
+	case feedInvite:
+		if feed.Inviter != nil && feed.Inviter.NickName != "" {
+			return fmt.Sprintf("%s님이 %s님을 초대했습니다.", feed.Inviter.NickName, names)
+		}
+		return names + "님이 들어왔습니다."
+	case feedLeave, feedSecretLeave:
+		return names + "님이 나갔습니다."
+	case feedOpenJoin:
+		return names + "님이 들어왔습니다."
+	case feedOpenKicked:
+		return names + "님을 내보냈습니다."
+	case feedHandOverHost:
+		return names + "님이 방장이 되었습니다."
+	}
+	return fmt.Sprintf("[KakaoTalk 알림 %d]", feed.FeedType)
+}
+
+// callText turns a VoIP log entry ({"type":"v_bye","duration":886,...}) into a line
+// like the ones KakaoTalk shows.
+func callText(msg *KakaoMessage, att map[string]any) string {
+	kind, secs := attStr(att, "type"), attInt(att, "duration")
+	if kind == "" {
+		var info struct {
+			Type     string `json:"type"`
+			Duration int    `json:"duration"`
+		}
+		_ = json.Unmarshal([]byte(msg.Message), &info)
+		kind, secs = info.Type, info.Duration
+	}
+	switch kind {
+	case "v_invite":
+		return "📞 통화 시작"
+	case "v_bye":
+		if secs > 0 {
+			return "📞 통화 종료 (" + formatDuration(secs) + ")"
+		}
+		return "📞 통화 종료"
+	case "v_canceled":
+		return "📞 통화 취소"
+	case "v_noanswer", "v_missed":
+		return "📞 부재중 통화"
+	case "v_decline", "v_deny", "v_reject":
+		return "📞 통화 거절"
+	case "v_busy":
+		return "📞 상대방이 통화 중"
+	}
+	return "📞 통화"
+}
+
+func formatDuration(secs int) string {
+	if secs >= 3600 {
+		return fmt.Sprintf("%d:%02d:%02d", secs/3600, secs/60%60, secs%60)
+	}
+	return fmt.Sprintf("%d:%02d", secs/60, secs%60)
+}
 
 func attStr(att map[string]any, key string) string {
 	if v, ok := att[key].(string); ok {
@@ -71,7 +187,15 @@ func (kc *KakaoClient) convertMessage(ctx context.Context, portal *bridgev2.Port
 		att = map[string]any{}
 	}
 	cm := &bridgev2.ConvertedMessage{}
-	switch msg.Kind() {
+	switch msg.BaseKind() {
+	case typeFeed:
+		body := msg.Message
+		if feed := parseFeed(msg); feed != nil {
+			body = feedText(feed)
+		}
+		cm.Parts = []*bridgev2.ConvertedMessagePart{textPart(event.MsgNotice, body)}
+	case typeCall:
+		cm.Parts = []*bridgev2.ConvertedMessagePart{textPart(event.MsgNotice, callText(msg, att))}
 	case typeText:
 		cm.Parts = []*bridgev2.ConvertedMessagePart{textPart(event.MsgText, msg.Message)}
 	case typeReply:
@@ -110,6 +234,16 @@ func (kc *KakaoClient) convertMessage(ctx context.Context, portal *bridgev2.Port
 			kc.mediaPart(ctx, portal, intent, event.MsgFile, attStr(att, "url"), name, 0, 0),
 		}
 	case typeEmoticon, typeAnimEmote, typeSticker:
+		zerolog.Ctx(ctx).Debug().Interface("attachment", att).Msg("KakaoTalk emoticon")
+		if sticker := kc.emoticonPart(ctx, portal, intent, att); sticker != nil {
+			cm.Parts = []*bridgev2.ConvertedMessagePart{sticker}
+			if msg.Message != "" {
+				caption := textPart(event.MsgText, msg.Message)
+				caption.ID = "caption"
+				cm.Parts = append(cm.Parts, caption)
+			}
+			break
+		}
 		body := "(이모티콘)"
 		if msg.Message != "" {
 			body += " " + msg.Message
@@ -120,7 +254,7 @@ func (kc *KakaoClient) convertMessage(ctx context.Context, portal *bridgev2.Port
 			cm.Parts = []*bridgev2.ConvertedMessagePart{textPart(event.MsgText, msg.Message)}
 		} else {
 			cm.Parts = []*bridgev2.ConvertedMessagePart{
-				textPart(event.MsgNotice, fmt.Sprintf("[Unsupported KakaoTalk message type %d]", msg.Kind())),
+				textPart(event.MsgNotice, fmt.Sprintf("[Unsupported KakaoTalk message type %d]", msg.BaseKind())),
 			}
 		}
 	}
@@ -175,6 +309,28 @@ func (kc *KakaoClient) mediaPart(
 		},
 	}
 	return &bridgev2.ConvertedMessagePart{Type: event.EventMessage, Content: content}
+}
+
+// emoticonPart bridges a KakaoTalk emoticon as a Matrix sticker, or returns nil if
+// it has no image path or the image can't be fetched.
+func (kc *KakaoClient) emoticonPart(
+	ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, att map[string]any,
+) *bridgev2.ConvertedMessagePart {
+	p := attStr(att, "path")
+	if p == "" {
+		return nil
+	}
+	part := kc.mediaPart(ctx, portal, intent, event.MsgImage, emoticonCDN+p, p, attInt(att, "width"), attInt(att, "height"))
+	if part.Content.MsgType != event.MsgImage {
+		return nil
+	}
+	part.Type = event.EventSticker
+	part.Content.MsgType = ""
+	part.Content.Body = "(이모티콘)"
+	if alt := attStr(att, "alt"); alt != "" {
+		part.Content.Body = alt
+	}
+	return part
 }
 
 func extForMime(mime string) string {

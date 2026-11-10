@@ -46,6 +46,12 @@ func (kc *KakaoClient) FetchMessages(ctx context.Context, params bridgev2.FetchM
 	converted := make([]*bridgev2.BackfillMessage, 0, len(msgs))
 	for _, msg := range msgs {
 		msg.ChatID = chatID
+		if msg.Deleted() {
+			continue
+		}
+		if feed := parseFeed(msg); feed != nil && (feed.Hidden || feed.FeedType == feedDeleteToAll) {
+			continue
+		}
 		cm, err := kc.convertMessage(ctx, params.Portal, params.Portal.Bridge.Bot, msg)
 		if err != nil {
 			zerolog.Ctx(ctx).Err(err).Str("log_id", msg.LogID).Msg("Failed to convert backfill message")

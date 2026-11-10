@@ -3,10 +3,12 @@ package connector
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
 
+	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/event"
@@ -41,13 +43,22 @@ func (kc *KakaoClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.Ma
 		if msg.Content.Info != nil {
 			mimeType = msg.Content.Info.MimeType
 		}
-		err = kc.call(ctx, "sendMedia", map[string]any{
+		params := map[string]any{
 			"chat_id":  chatID,
 			"kind":     mediaKind(msg.Content.MsgType, mimeType),
 			"data_b64": base64.StdEncoding.EncodeToString(data),
 			"filename": fileName,
 			"mime":     mimeType,
-		}, &res)
+		}
+		err = kc.call(ctx, "sendMedia", params, &res)
+		// KakaoTalk refuses some photos/videos as media (e.g. long videos); a plain
+		// file still gets through.
+		if params["kind"] != "file" && !errors.Is(err, ErrSidecarExited) && (err != nil || !res.Success || res.LogID == "") {
+			zerolog.Ctx(ctx).Warn().Err(err).Any("kind", params["kind"]).Msg("KakaoTalk rejected the media, sending it as a file")
+			params["kind"] = "file"
+			res = KakaoSendResult{}
+			err = kc.call(ctx, "sendMedia", params, &res)
+		}
 	default:
 		return nil, fmt.Errorf("%w %s", bridgev2.ErrUnsupportedMessageType, msg.Content.MsgType)
 	}

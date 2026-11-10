@@ -58,11 +58,11 @@ type KakaoMessage struct {
 	LogID       string          `json:"log_id"`
 	Type        json.RawMessage `json:"type"`
 	MessageType int             `json:"message_type"`
-	AuthorID    int64          `json:"author_id"`
-	AuthorName  *string        `json:"author_name"`
-	Message     string         `json:"message"`
-	Attachment  map[string]any `json:"attachment"`
-	SentAt      int64          `json:"sent_at"`
+	AuthorID    int64           `json:"author_id"`
+	AuthorName  *string         `json:"author_name"`
+	Message     string          `json:"message"`
+	Attachment  map[string]any  `json:"attachment"`
+	SentAt      int64           `json:"sent_at"`
 }
 
 func (m *KakaoMessage) Kind() int {
@@ -72,6 +72,16 @@ func (m *KakaoMessage) Kind() int {
 	var kind int
 	_ = json.Unmarshal(m.Type, &kind)
 	return kind
+}
+
+// BaseKind is the message type without the deleted flag.
+func (m *KakaoMessage) BaseKind() int {
+	return m.Kind() &^ flagDeleted
+}
+
+// Deleted reports whether the sender deleted the message for everyone.
+func (m *KakaoMessage) Deleted() bool {
+	return m.Kind()&flagDeleted != 0
 }
 
 type KakaoReadEvent struct {
@@ -344,6 +354,28 @@ func (kc *KakaoClient) handleEvent(ctx context.Context, name string, data json.R
 }
 
 func (kc *KakaoClient) handleMessage(msg *KakaoMessage) {
+	if feed := parseFeed(msg); feed != nil {
+		switch {
+		case feed.FeedType == feedDeleteToAll && feed.LogID != "":
+			kc.UserLogin.QueueRemoteEvent(&simplevent.MessageRemove{
+				EventMeta: simplevent.EventMeta{
+					Type:      bridgev2.RemoteEventMessageRemove,
+					PortalKey: kc.makePortalKey(msg.ChatID),
+					Sender:    kc.makeEventSender(msg.AuthorID),
+					Timestamp: time.Unix(msg.SentAt, 0),
+				},
+				TargetMessage: makeMessageID(msg.ChatID, string(feed.LogID)),
+			})
+			return
+		case feed.Hidden:
+			// Bookkeeping that KakaoTalk clients don't show either (e.g. edit markers).
+			kc.UserLogin.Log.Debug().Str("chat_id", msg.ChatID).Int("feed_type", feed.FeedType).Msg("Ignoring hidden KakaoTalk feed")
+			return
+		}
+	}
+	if msg.Deleted() {
+		return
+	}
 	if msg.AuthorName != nil && *msg.AuthorName != "" {
 		key := strconv.FormatInt(msg.AuthorID, 10)
 		kc.cacheLock.Lock()
