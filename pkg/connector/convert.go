@@ -284,6 +284,14 @@ func (kc *KakaoClient) mediaPart(
 		zerolog.Ctx(ctx).Err(err).Msg("Failed to download KakaoTalk media")
 		return textPart(event.MsgNotice, "[Failed to bridge media: "+err.Error()+"]")
 	}
+	return kc.uploadPart(ctx, portal, intent, msgType, data, mime, fileName, width, height)
+}
+
+// uploadPart uploads media to Matrix; on failure it falls back to a notice.
+func (kc *KakaoClient) uploadPart(
+	ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI,
+	msgType event.MessageType, data []byte, mime, fileName string, width, height int,
+) *bridgev2.ConvertedMessagePart {
 	if mime == "" || mime == "application/octet-stream" {
 		mime = http.DetectContentType(data)
 	}
@@ -309,28 +317,6 @@ func (kc *KakaoClient) mediaPart(
 		},
 	}
 	return &bridgev2.ConvertedMessagePart{Type: event.EventMessage, Content: content}
-}
-
-// emoticonPart bridges a KakaoTalk emoticon as a Matrix sticker, or returns nil if
-// it has no image path or the image can't be fetched.
-func (kc *KakaoClient) emoticonPart(
-	ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, att map[string]any,
-) *bridgev2.ConvertedMessagePart {
-	p := attStr(att, "path")
-	if p == "" {
-		return nil
-	}
-	part := kc.mediaPart(ctx, portal, intent, event.MsgImage, emoticonCDN+p, p, attInt(att, "width"), attInt(att, "height"))
-	if part.Content.MsgType != event.MsgImage {
-		return nil
-	}
-	part.Type = event.EventSticker
-	part.Content.MsgType = ""
-	part.Content.Body = "(이모티콘)"
-	if alt := attStr(att, "alt"); alt != "" {
-		part.Content.Body = alt
-	}
-	return part
 }
 
 func extForMime(mime string) string {
