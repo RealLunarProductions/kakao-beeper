@@ -163,9 +163,16 @@ func (kc *KakaoClient) GetUserInfo(ctx context.Context, ghost *bridgev2.Ghost) (
 }
 
 var roomCaps = &event.RoomFeatures{
-	ID:            "kakaotalk.capabilities.2026_10_28",
+	ID:            "kakaotalk.capabilities.2026_11_11",
 	MaxTextLength: 10000,
 	ReadReceipts:  true,
+	// A message with one custom emoji from the user's emoticon packs goes out as
+	// that emoticon. Beeper only offers the user's own custom emoji in rooms that
+	// accept custom emoji reactions; reactions themselves stay unsupported.
+	Formatting: event.FormattingFeatureMap{
+		event.FmtCustomEmoji: event.CapLevelPartialSupport,
+	},
+	CustomEmojiReactions: true,
 	File: event.FileFeatureMap{
 		event.MsgImage: {
 			MimeTypes: map[string]event.CapabilitySupportLevel{
@@ -174,7 +181,7 @@ var roomCaps = &event.RoomFeatures{
 				"image/gif":  event.CapLevelFullySupported,
 				"image/*":    event.CapLevelPartialSupport, // sent as a file
 			},
-			Caption: event.CapLevelRejected,
+			Caption: event.CapLevelPartialSupport, // sent as a separate text message
 			MaxSize: 30 << 20,
 		},
 		event.MsgVideo: {
@@ -182,7 +189,7 @@ var roomCaps = &event.RoomFeatures{
 				"video/mp4": event.CapLevelFullySupported,
 				"video/*":   event.CapLevelPartialSupport, // sent as a file
 			},
-			Caption: event.CapLevelRejected,
+			Caption: event.CapLevelPartialSupport, // sent as a separate text message
 			MaxSize: 100 << 20,
 		},
 		event.MsgAudio: {
@@ -192,14 +199,41 @@ var roomCaps = &event.RoomFeatures{
 				"audio/aac":   event.CapLevelFullySupported,
 				"audio/*":     event.CapLevelPartialSupport, // sent as a file
 			},
-			Caption: event.CapLevelRejected,
+			Caption: event.CapLevelPartialSupport, // sent as a separate text message
+			MaxSize: 100 << 20,
+		},
+		event.CapMsgSticker: {
+			// Known KakaoTalk emoticons go out as emoticons, other stickers as photos/files.
+			MimeTypes: map[string]event.CapabilitySupportLevel{
+				"image/webp": event.CapLevelFullySupported,
+				"image/png":  event.CapLevelFullySupported,
+				"image/gif":  event.CapLevelFullySupported,
+				"image/jpeg": event.CapLevelFullySupported,
+				"image/*":    event.CapLevelPartialSupport,
+			},
+			MaxSize: 30 << 20,
+		},
+		event.CapMsgGIF: {
+			MimeTypes: map[string]event.CapabilitySupportLevel{
+				"video/mp4": event.CapLevelFullySupported,
+				"image/gif": event.CapLevelFullySupported,
+			},
+			Caption: event.CapLevelPartialSupport, // sent as a separate text message
+			MaxSize: 30 << 20,
+		},
+		event.CapMsgVoice: {
+			MimeTypes: map[string]event.CapabilitySupportLevel{
+				"audio/mp4": event.CapLevelFullySupported,
+				"audio/aac": event.CapLevelFullySupported,
+				"audio/*":   event.CapLevelPartialSupport, // sent as a file
+			},
 			MaxSize: 100 << 20,
 		},
 		event.MsgFile: {
 			MimeTypes: map[string]event.CapabilitySupportLevel{
 				"*/*": event.CapLevelFullySupported,
 			},
-			Caption: event.CapLevelRejected,
+			Caption: event.CapLevelPartialSupport, // sent as a separate text message
 			MaxSize: 100 << 20,
 		},
 	},

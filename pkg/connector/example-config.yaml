@@ -7,3 +7,12 @@ sidecar_script: ~/kakao-beeper/sidecar/sidecar.mjs
 state_dir: ~/.local/share/kakao-beeper/agent-messenger
 # Number of recent messages to bridge when a chat is first created in Beeper.
 initial_backfill: 30
+# Keep a "KakaoTalk 이모티콘" room with every emoticon of the packs you use, to
+# forward from (Beeper has no sticker picker for bridges). Packs you send an
+# emoticon from in KakaoTalk are added automatically; add others with
+# "!kakao emoticons add <pack>".
+emoticon_shelf: true
+# Also post each pack in the emoticon room as custom emoji. In Beeper Desktop,
+# right-click one and choose "Add to Custom Emoji"; picking it from the emoji
+# picker's Custom tab, on its own or with text, then sends the real emoticon.
+emoticon_picker: true

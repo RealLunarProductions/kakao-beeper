@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"net/http"
+	"strconv"
 
 	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix/bridgev2"
@@ -14,7 +15,7 @@ import (
 // emoticonPart bridges a KakaoTalk emoticon as a Matrix sticker, or returns nil if
 // it has no image path or the image can't be fetched.
 func (kc *KakaoClient) emoticonPart(
-	ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, att map[string]any,
+	ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, msg *KakaoMessage, att map[string]any,
 ) *bridgev2.ConvertedMessagePart {
 	p := attStr(att, "path")
 	if p == "" {
@@ -28,9 +29,20 @@ func (kc *KakaoClient) emoticonPart(
 	data = decryptEmoticon(data)
 	mime := http.DetectContentType(data)
 	width, height := imageSize(data)
+	// Hash before uploading: the upload encrypts data in place in encrypted rooms.
+	hash := imageHash(data)
 	part := kc.uploadPart(ctx, portal, intent, event.MsgImage, data, mime, p, width, height)
 	if part.Content.MsgType != event.MsgImage {
 		return nil
+	}
+	if kc.Main.emoticons != nil {
+		owned := strconv.FormatInt(msg.AuthorID, 10) == string(kc.UserLogin.ID)
+		if err = kc.Main.emoticons.put(ctx, hash, contentMXC(part.Content), msg.BaseKind(), att, owned); err != nil {
+			zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to remember KakaoTalk emoticon")
+		}
+		if owned {
+			kc.queueShelfPack(emoticonPack(p))
+		}
 	}
 	part.Type = event.EventSticker
 	part.Content.MsgType = ""

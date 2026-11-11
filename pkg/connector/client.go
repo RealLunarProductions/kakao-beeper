@@ -113,6 +113,13 @@ type KakaoClient struct {
 	cacheLock sync.RWMutex
 	chats     map[string]*KakaoChat
 	members   map[string]KakaoMember
+
+	// emoticonEchoes holds, per chat, the emoticon just sent from Matrix, so the
+	// "(이모티콘)" text Beeper sends after a forwarded sticker isn't bridged.
+	emoticonEchoes sync.Map // chat ID -> *emoticonEcho
+
+	shelfLock   sync.Mutex // one pack at a time into the emoticon shelf
+	shelfQueued sync.Map   // pack -> true while queued or added
 }
 
 var _ bridgev2.NetworkAPI = (*KakaoClient)(nil)
@@ -182,6 +189,7 @@ func (kc *KakaoClient) Connect(ctx context.Context) {
 	kc.disconnected.Store(false)
 	kc.UserLogin.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnected})
 	go kc.syncChats(log.WithContext(context.WithoutCancel(ctx)))
+	go kc.syncShelf(log.WithContext(context.WithoutCancel(ctx)))
 }
 
 // Sidecar exit codes with a meaning (sidecar/sidecar.mjs).

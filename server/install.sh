@@ -30,7 +30,7 @@ if ! swapon --show | grep -q . && [ ! -f /swapfile ]; then
 fi
 
 id kakao >/dev/null 2>&1 || useradd --system --home-dir /var/lib/kakao-beeper --shell /usr/sbin/nologin kakao
-install -d -o kakao -g kakao -m 700 /var/lib/kakao-beeper
+install -d -o kakao -g kakao -m 700 /var/lib/kakao-beeper /var/lib/kakao-beeper/logs
 
 echo "== Installing bridge ($(cat "$here/COMMIT"))"
 systemctl stop kakao-beeper 2>/dev/null || true

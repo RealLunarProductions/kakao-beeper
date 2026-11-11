@@ -12,6 +12,7 @@ import (
 	"github.com/rs/zerolog"
 	up "go.mau.fi/util/configupgrade"
 	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/bridgev2/commands"
 	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
@@ -23,6 +24,9 @@ type KakaoConnector struct {
 
 	// iconMXC is the uploaded network icon, set in Start (before bridge info is sent).
 	iconMXC id.ContentURIString
+	// emoticons maps bridged emoticon stickers back to KakaoTalk emoticons; nil if
+	// its table couldn't be created.
+	emoticons *emoticonStore
 }
 
 //go:embed kakaotalk-icon.png
@@ -39,6 +43,11 @@ type Config struct {
 	StateDir string `yaml:"state_dir"`
 	// InitialBackfill is how many recent messages to bridge when a chat is first created.
 	InitialBackfill int `yaml:"initial_backfill"`
+	// EmoticonShelf keeps a room of the user's emoticon packs to forward from.
+	EmoticonShelf bool `yaml:"emoticon_shelf"`
+	// EmoticonPicker posts each shelf pack as custom emoji the user can add to
+	// Beeper's emoji picker.
+	EmoticonPicker bool `yaml:"emoticon_picker"`
 }
 
 //go:embed example-config.yaml
@@ -49,6 +58,8 @@ func upgradeConfig(helper up.Helper) {
 	helper.Copy(up.Str, "sidecar_script")
 	helper.Copy(up.Str, "state_dir")
 	helper.Copy(up.Int, "initial_backfill")
+	helper.Copy(up.Bool, "emoticon_shelf")
+	helper.Copy(up.Bool, "emoticon_picker")
 }
 
 func (kc *KakaoConnector) GetConfig() (example string, data any, upgrader up.Upgrader) {
@@ -80,6 +91,9 @@ func (kc *KakaoConnector) GetName() bridgev2.BridgeName {
 
 func (kc *KakaoConnector) Init(bridge *bridgev2.Bridge) {
 	kc.Bridge = bridge
+	if proc, ok := bridge.Commands.(*commands.Processor); ok {
+		proc.AddHandlers(cmdEmoticons)
+	}
 	kc.Config.NodePath = expandHome(kc.Config.NodePath)
 	kc.Config.SidecarScript = expandHome(kc.Config.SidecarScript)
 	kc.Config.StateDir = expandHome(kc.Config.StateDir)
@@ -90,6 +104,12 @@ func (kc *KakaoConnector) Init(bridge *bridgev2.Bridge) {
 
 func (kc *KakaoConnector) Start(ctx context.Context) error {
 	kc.iconMXC = kc.uploadNetworkIcon(ctx)
+	store, err := newEmoticonStore(ctx, kc.Bridge.DB.Database)
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to set up the emoticon table, stickers will be sent as images")
+	} else {
+		kc.emoticons = store
+	}
 	return nil
 }
 
@@ -124,9 +144,10 @@ func (kc *KakaoConnector) GetCapabilities() *bridgev2.NetworkGeneralCapabilities
 }
 
 // Bump info when the bridge info content changes so existing rooms get it resent
-// (2: network icon, 3: m.bridge network section; caps 2: video/audio/files).
+// (2: network icon, 3: m.bridge network section; caps 2: video/audio/files,
+// 3: stickers, GIFs, voice messages, captions).
 func (kc *KakaoConnector) GetBridgeInfoVersion() (info, capabilities int) {
-	return 3, 2
+	return 3, 4
 }
 
 var _ bridgev2.PortalBridgeInfoFillingNetwork = (*KakaoConnector)(nil)

@@ -27,9 +27,12 @@
 // refresh ends in EXIT_BAD_CREDENTIALS.
 
 import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
+import { pathToFileURL } from 'node:url'
 
 const CREDENTIALS_FILE = 'kakaotalk-credentials.json'
 const stateDir = process.env.KAKAO_SIDECAR_STATE_DIR ?? join(homedir(), '.local/share/kakao-beeper/agent-messenger')
@@ -45,6 +48,99 @@ const { KakaoTalkClient, KakaoTalkListener, KakaoCredentialManager, refreshKakao
   'agent-messenger/kakaotalk'
 )
 const { Long } = await import('bson')
+
+// Media upload fix. agent-messenger 2.39.1 starts its 60 s wait for the upload
+// server's COMPLETE packet before it streams the file, so an upload that takes
+// over a minute (a 30 MB file on a slow uplink) is reported as failed and the
+// connection is closed before KakaoTalk registers the message. Replace its
+// SHIP -> POST -> stream -> COMPLETE step with one that starts waiting only
+// once the bytes are written, and that throws with the server's status
+// instead of returning a silent failure. If the library's internals have
+// moved, keep its own uploader and say so.
+const COMPLETE_TIMEOUT_MS = 120_000
+
+async function installUploadFix() {
+  try {
+    const require = createRequire(import.meta.url)
+    const protocol = join(dirname(require.resolve('agent-messenger/package.json')), 'dist/src/platforms/kakaotalk/protocol')
+    const { LocoConnection } = await import(pathToFileURL(join(protocol, 'connection.js')).href)
+    const { getLocoDeviceConfig, MCCMNC } = await import(pathToFileURL(join(protocol, 'config.js')).href)
+    const proto = KakaoTalkClient.prototype
+    if (typeof LocoConnection !== 'function' || typeof getLocoDeviceConfig !== 'function' ||
+        typeof proto.sendMediaViaLoco !== 'function' || typeof proto.executeWithReconnect !== 'function') {
+      throw new Error('agent-messenger internals changed')
+    }
+    proto.sendMediaViaLoco = async function (opts) {
+      const chatId = Long.fromString(String(opts.chatId))
+      return this.executeWithReconnect(async ({ session }) => {
+        const ship = await session.shipMedia(chatId, opts.msgType, opts.data.byteLength, opts.checksum, opts.extension)
+        const { k, vh, p } = ship.body ?? {}
+        if (ship.statusCode !== 0 || typeof k !== 'string' || typeof vh !== 'string' || typeof p !== 'number') {
+          throw coded(`KakaoTalk refused the upload (SHIP status ${ship.statusCode}, body status ${ship.body?.status})`, opts.errorCode)
+        }
+        const device = getLocoDeviceConfig(this.deviceType)
+        const body = {
+          k, s: opts.data.byteLength, t: opts.msgType, u: Long.fromString(String(this.userId)),
+          os: device.os, av: device.appVersion, nt: 0, mm: MCCMNC,
+          f: opts.filename, c: chatId, mid: Long.ONE, ns: true,
+        }
+        if (typeof opts.width === 'number') body.w = opts.width
+        if (typeof opts.height === 'number') body.h = opts.height
+        const started = Date.now()
+        const complete = await postMedia(LocoConnection, vh, p, body, opts.data)
+        const chatLog = complete.body?.chatLog
+        if (!chatLog?.logId) {
+          throw coded(`KakaoTalk did not register the upload (COMPLETE status ${complete.statusCode}, body status ${complete.body?.status})`, opts.errorCode)
+        }
+        log(`uploaded ${opts.filename} (${opts.data.byteLength} B, type ${opts.msgType}) in ${Math.round((Date.now() - started) / 1000)} s`)
+        return {
+          success: true,
+          status_code: 0,
+          chat_id: String(opts.chatId),
+          log_id: String(chatLog.logId),
+          sent_at: chatLog.sendAt ?? 0,
+        }
+      })
+    }
+  } catch (err) {
+    log('media upload fix not installed, using the agent-messenger uploader:', err?.message ?? err)
+  }
+}
+
+// One upload on its own LOCO connection: POST, stream the bytes (from the
+// offset the server asks for), then wait for COMPLETE, which carries the chatLog.
+async function postMedia(LocoConnection, host, port, body, data) {
+  const conn = new LocoConnection()
+  await conn.connectSecure(host, port)
+  let resolveComplete
+  const complete = new Promise((resolve) => { resolveComplete = resolve })
+  conn.onPush((push) => { if (push.method === 'COMPLETE') resolveComplete(push) })
+  let timer
+  try {
+    const post = await conn.sendPacket('POST', body)
+    if (post.statusCode !== 0 || (typeof post.body?.status === 'number' && post.body.status !== 0)) {
+      throw coded(`KakaoTalk refused the upload (POST status ${post.statusCode}, body status ${post.body?.status})`, 'upload_failed')
+    }
+    const offset = typeof post.body?.o === 'number' ? post.body.o : 0
+    if (offset < data.byteLength) await conn.writeRaw(asBuffer(data.subarray(offset)))
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(coded(`no COMPLETE from the upload server ${COMPLETE_TIMEOUT_MS / 1000} s after sending ${data.byteLength} B`, 'upload_timeout')), COMPLETE_TIMEOUT_MS)
+    })
+    return await Promise.race([complete, timeout])
+  } finally {
+    clearTimeout(timer)
+    conn.close()
+  }
+}
+
+// A Buffer view of the bytes (no copy).
+function asBuffer(bytes) {
+  return Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+}
+
+function coded(message, code) {
+  return Object.assign(new Error(message), { code })
+}
 
 // Exit codes the bridge understands (pkg/connector/client.go).
 const EXIT_KICKED = 3
@@ -68,6 +164,7 @@ let healthChatId = null
 
 const write = (obj) => process.stdout.write(JSON.stringify(obj) + '\n')
 const log = (...args) => console.error('[sidecar]', ...args)
+await installUploadFix()
 const emit = (event, data) => write({ event, data })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -287,6 +384,23 @@ async function getMembers(chatId) {
   }))
 }
 
+// Emoticons are a plain WRITE with the emoticon's attachment ({path, name, type})
+// as extra; agent-messenger only receives them, so this goes through its session.
+async function sendEmoticon(chatId, type, attachment, text = '') {
+  if (![6, 12, 20, 22, 25].includes(type) || typeof attachment?.path !== 'string') {
+    throw coded(`not an emoticon (type ${type})`, 'bad_emoticon')
+  }
+  const c = need()
+  const res = await c.executeWithReconnect(({ session }) =>
+    session.sendAttachment(Long.fromString(String(chatId)), type, attachment, typeof text === 'string' ? text : ''))
+  const status = typeof res.body?.status === 'number' ? res.body.status : 0
+  const logId = res.body?.logId != null ? String(res.body.logId) : '0'
+  if (res.statusCode !== 0 || status !== 0 || logId === '0') {
+    throw coded(`KakaoTalk refused the emoticon (status ${res.statusCode}, body status ${status})`, 'send_emoticon_failed')
+  }
+  return { success: true, status_code: 0, chat_id: String(chatId), log_id: logId, sent_at: res.body.sendAt ?? 0 }
+}
+
 const methods = {
   start,
   ping: async () => 'pong',
@@ -304,7 +418,9 @@ const methods = {
     plain(await need().sendMessage(p.chat_id, p.text, p.reply_to ? { replyTo: p.reply_to } : undefined)),
   sendPhoto: async (p) => plain(await need().sendPhoto(p.chat_id, Buffer.from(p.data_b64, 'base64'), p.filename)),
   sendMedia: async (p) => {
-    const data = Buffer.from(p.data_b64, 'base64')
+    // The bridge passes large files as a path to a private temp file it deletes
+    // afterwards; data_b64 is still accepted from older bridges.
+    const data = p.path ? await readFile(p.path) : Buffer.from(p.data_b64, 'base64')
     const c = need()
     switch (p.kind) {
       case 'photo': return plain(await c.sendPhoto(p.chat_id, data, p.filename))
@@ -313,6 +429,7 @@ const methods = {
       default: return plain(await c.sendFile(p.chat_id, data, p.filename || 'file', p.mime || undefined))
     }
   },
+  sendEmoticon: async (p) => plain(await sendEmoticon(p.chat_id, p.type, p.attachment, p.text)),
   sendTyping: async (p) => plain(await need().sendTyping(p.chat_id)),
   markRead: async (p) => plain(await need().markRead(p.chat_id, p.log_id)),
 }

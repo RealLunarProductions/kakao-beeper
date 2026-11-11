@@ -23,6 +23,6 @@ npm ci --prefix "$out/sidecar" --omit=optional --ignore-scripts --no-audit --no-
 (cd "$out/sidecar" && node check-imports.mjs)
 
 cp "$here"/server/{install.sh,kakao-beeper.service} "$out/"
-git -C "$here" rev-parse --short HEAD >"$out/COMMIT"
+git -C "$here" describe --always --dirty --abbrev=7 >"$out/COMMIT"
 tar -C "$here/dist" -czf "$here/dist/kakao-beeper-server.tar.gz" server
 echo "== $(du -h "$here/dist/kakao-beeper-server.tar.gz" | cut -f1) dist/kakao-beeper-server.tar.gz"

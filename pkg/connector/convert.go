@@ -47,7 +47,7 @@ const (
 )
 
 // Emoticon attachments carry a CDN path like "4412207.emot_001.webp".
-const emoticonCDN = "https://item.kakaocdn.net/dw/"
+var emoticonCDN = "https://item.kakaocdn.net/dw/"
 
 type feedMember struct {
 	NickName string `json:"nickName"`
@@ -235,7 +235,7 @@ func (kc *KakaoClient) convertMessage(ctx context.Context, portal *bridgev2.Port
 		}
 	case typeEmoticon, typeAnimEmote, typeSticker:
 		zerolog.Ctx(ctx).Debug().Interface("attachment", att).Msg("KakaoTalk emoticon")
-		if sticker := kc.emoticonPart(ctx, portal, intent, att); sticker != nil {
+		if sticker := kc.emoticonPart(ctx, portal, intent, msg, att); sticker != nil {
 			cm.Parts = []*bridgev2.ConvertedMessagePart{sticker}
 			if msg.Message != "" {
 				caption := textPart(event.MsgText, msg.Message)
